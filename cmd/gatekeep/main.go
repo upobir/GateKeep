@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"os"
@@ -43,6 +44,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	notify.SetEnabled(loadNotifications(store))
 	srv.SetNotifier(notify.Send)
 	log.Printf("listening on %s", srv.URL())
 	log.Printf("mcp %s/mcp", srv.URL())
@@ -67,8 +69,20 @@ func main() {
 	tray.Run(tray.Options{
 		URL: srv.URL(),
 		OnReady: func() {
-			notify.Start()
+			if notify.Enabled() {
+				notify.Start()
+			}
 			close(ready)
+		},
+		OnNotifications: func(enabled bool) {
+			if err := saveNotifications(store, enabled); err != nil {
+				log.Printf("notifications: %v", err)
+				return
+			}
+			notify.SetEnabled(enabled)
+			if enabled {
+				notify.Start()
+			}
 		},
 		OnQuit: func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -81,4 +95,25 @@ func main() {
 			}
 		},
 	})
+}
+
+func loadNotifications(store *db.Store) bool {
+	setting, err := store.GetSetting(context.Background(), "notifications")
+	if errors.Is(err, db.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		log.Printf("notifications: %v", err)
+		return true
+	}
+	return setting.Value != "0"
+}
+
+func saveNotifications(store *db.Store, enabled bool) error {
+	value := "0"
+	if enabled {
+		value = "1"
+	}
+	_, err := store.PutSetting(context.Background(), "notifications", value)
+	return err
 }

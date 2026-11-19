@@ -6,14 +6,16 @@ import (
 	"runtime"
 
 	"gatekeep/internal/icon"
+	"gatekeep/internal/notify"
 	"gatekeep/internal/startup"
 	"github.com/getlantern/systray"
 )
 
 type Options struct {
-	URL     string
-	OnReady func()
-	OnQuit  func()
+	URL             string
+	OnReady         func()
+	OnQuit          func()
+	OnNotifications func(enabled bool)
 }
 
 func Run(opts Options) {
@@ -38,6 +40,7 @@ func onReady(opts Options) {
 
 	openItem := systray.AddMenuItem("Open UI", "Open GateKeep in the browser")
 	loginItem := systray.AddMenuItemCheckbox("Start at Login", "Open GateKeep when you log in", startup.Enabled())
+	noteItem := systray.AddMenuItemCheckbox("Notifications", "Notify when a request is waiting", notify.Enabled())
 	systray.AddSeparator()
 	quitItem := systray.AddMenuItem("Quit", "Quit GateKeep")
 
@@ -66,6 +69,16 @@ func onReady(opts Options) {
 					if err := openURL("x-apple.systempreferences:com.apple.LoginItems-Settings.extension"); err != nil {
 						log.Printf("startup approval: %v", err)
 					}
+				}
+			case <-noteItem.ClickedCh:
+				enable := !noteItem.Checked()
+				if opts.OnNotifications != nil {
+					opts.OnNotifications(enable)
+				}
+				if notify.Enabled() {
+					noteItem.Check()
+				} else {
+					noteItem.Uncheck()
 				}
 			case <-quitItem.ClickedCh:
 				systray.Quit()
