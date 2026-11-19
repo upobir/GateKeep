@@ -207,7 +207,7 @@ func approveMock(t *testing.T, client *http.Client, srv *Server, store *db.Store
 		t.Fatalf("call = %+v", outcome)
 	}
 	decoded := decodeOutcome(t, outcome.text)
-	number, ok := decoded.Result.(float64)
+	number, ok := objectValue(t, decoded.Result).(float64)
 	if !decoded.OK || !ok {
 		t.Fatalf("result = %+v", decoded)
 	}

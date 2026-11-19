@@ -553,6 +553,19 @@ func findMockTool(t *testing.T, body map[string]any) map[string]any {
 	return nil
 }
 
+func objectValue(t *testing.T, result any) any {
+	t.Helper()
+	object, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("result = %#v", result)
+	}
+	value, ok := object["value"]
+	if !ok {
+		t.Fatalf("result = %#v", result)
+	}
+	return value
+}
+
 func decodeOutcome(t *testing.T, text string) mcp.Outcome {
 	t.Helper()
 	var outcome mcp.Outcome

@@ -17,13 +17,15 @@ import (
 )
 
 func main() {
-	port := flag.Int("port", 8765, "listen port on 127.0.0.1")
+	portFlag := flag.Int("port", 0, "listen port on 127.0.0.1; omit to use the saved port")
 	dbFlag := flag.String("db", "", "sqlite database path")
 	flag.Parse()
-
-	if *port < 1 || *port > 65535 {
-		log.Fatalf("invalid port %d", *port)
-	}
+	portExplicit := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "port" {
+			portExplicit = true
+		}
+	})
 
 	dbPath := *dbFlag
 	if dbPath == "" {
@@ -40,7 +42,15 @@ func main() {
 	defer store.Close()
 	log.Printf("database %s", dbPath)
 
-	srv, err := server.New(*port, store)
+	port := server.ListenPort(store)
+	if portExplicit {
+		port = *portFlag
+	}
+	if port < 1 || port > 65535 {
+		log.Fatalf("invalid port %d", port)
+	}
+
+	srv, err := server.New(port, store)
 	if err != nil {
 		log.Fatal(err)
 	}

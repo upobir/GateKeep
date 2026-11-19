@@ -229,6 +229,25 @@ button.primary,
   align-self: flex-start;
 }
 
+.settings .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.settings button.reset {
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+textarea.instructions {
+  min-height: 14rem;
+}
+
 select {
   appearance: none;
   -webkit-appearance: none;

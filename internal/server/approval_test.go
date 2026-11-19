@@ -102,7 +102,7 @@ func TestApprovalQueueOrdersAndAnswers(t *testing.T) {
 	}
 	approved := decodeOutcome(t, first.text)
 	rejectedOutcome := decodeOutcome(t, second.text)
-	if first.isError || !approved.OK || approved.Kind != "tool_call_successful" || approved.Result != true {
+	if first.isError || !approved.OK || approved.Kind != "tool_call_successful" || objectValue(t, approved.Result) != true {
 		t.Fatalf("approved result = %+v %s", approved, first.text)
 	}
 	if !second.isError || rejectedOutcome.OK || rejectedOutcome.Kind != "user_rejected" || rejectedOutcome.Reason != "too broad" {
@@ -500,7 +500,7 @@ func TestSeeResultsSendAndReject(t *testing.T) {
 		t.Fatal(sent.err)
 	}
 	got := decodeOutcome(t, sent.text)
-	if sent.isError || !got.OK || got.Kind != "tool_call_successful" || got.Result != true {
+	if sent.isError || !got.OK || got.Kind != "tool_call_successful" || objectValue(t, got.Result) != true {
 		t.Fatalf("sent = %+v %s", got, sent.text)
 	}
 	stored, err := store.GetToolCall(context.Background(), pending[0].ID)

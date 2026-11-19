@@ -33,7 +33,7 @@ const (
 
 // Instructions is the guidance sent to the model.
 func Instructions(appURL string, approvalWait, executionLimit time.Duration) string {
-	return fmt.Sprintf("Every tool call waits for the user to approve it in GateKeep. The command does not run until then. Write the command so the user can read it, because the user checks it before approving. Call the tool for the resource type and pass one of that tool's resource names, the command, and a one-line reason. A request expires if the user does not approve it within %s, and the command does not run. After approval, a command stops if it runs longer than %s. GateKeep is at %s. Give the user that link when they need to approve a request. The tool result includes a link to the specific request. Do not claim the command ran.", approvalPhrase(approvalWait), approvalPhrase(executionLimit), appURL)
+	return fmt.Sprintf("Every tool call waits for the user to approve it in GateKeep. The command does not run until then. Write the command so the user can read it, because the user checks it before approving. Call the tool for the resource type and pass one of that tool's resource names, the command, and a one-line reason. A request expires if the user does not approve it within %s, and the command does not run. After approval, a command stops if it runs longer than %s. GateKeep is at %s. Give the user that link when they need to approve a request.", approvalPhrase(approvalWait), approvalPhrase(executionLimit), appURL)
 }
 
 func approvalPhrase(wait time.Duration) string {
@@ -91,7 +91,9 @@ func OutputSchema() map[string]any {
 				"description": "tool_call_successful when the command ran and the user shared the result. tool_call_error when the command failed and the user shared that failure. user_rejected when the user refused the command or refused to share its result. approval_expired when the request ended before the user decided. user_cancelled_mid_tool_call when the user stopped a running command. tool_call_timed_out when the command ran longer than its limit.",
 			},
 			"result": map[string]any{
-				"description": "Value returned by the command. Present only when ok is true.",
+				"type":                 "object",
+				"additionalProperties": true,
+				"description":          "JSON object returned by the command. Present only when ok is true.",
 			},
 			"error": map[string]any{
 				"type":        "string",
@@ -108,8 +110,19 @@ func OutputSchema() map[string]any {
 }
 
 // Ran is a successful command result.
+// A scalar or array is wrapped as {"value": ...} so result stays an object.
 func Ran(result any) Outcome {
-	return Outcome{OK: true, Kind: "tool_call_successful", Result: result}
+	return Outcome{OK: true, Kind: "tool_call_successful", Result: objectResult(result)}
+}
+
+func objectResult(result any) any {
+	if result == nil {
+		return nil
+	}
+	if _, ok := result.(map[string]any); ok {
+		return result
+	}
+	return map[string]any{"value": result}
 }
 
 // Failed is a tool call that did not produce a result.

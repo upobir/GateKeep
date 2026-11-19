@@ -47,6 +47,8 @@ export function Settings({ auth, onChange }: { auth: AuthInfo; onChange: () => v
       <ApprovalTimeout />
       <ExecutionTimeout />
       <RecentWindow />
+      <Instructions />
+      <ListenPort />
     </div>
   )
 }
@@ -188,6 +190,139 @@ function recentHelp(unit: string) {
   }
   const boundary = unit === 'days' ? 'midnight' : unit === 'hours' ? 'hour' : unit === 'minutes' ? 'minute' : 'second'
   return `The window starts at the beginning of the current ${boundary} and includes the previous ones. Older calls move to History.`
+}
+
+function Instructions() {
+  const [text, setText] = useState('')
+  const [fallback, setFallback] = useState('')
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fetch('/api/settings/instructions')
+        .then(async (response) => {
+          if (!response.ok) {
+            setError(await errorMessage(response))
+            return
+          }
+          const body = (await response.json()) as { text: string; default: string }
+          setText(body.text)
+          setFallback(body.default)
+        })
+        .catch(() => setError('Could not load the instructions'))
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    setMessage('')
+    setError('')
+    const response = await fetch('/api/settings/instructions', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    })
+    if (!response.ok) {
+      setError(await errorMessage(response))
+      return
+    }
+    setMessage('Saved. The next connection receives this text.')
+  }
+
+  async function reset() {
+    setMessage('')
+    setError('')
+    const response = await fetch('/api/settings/instructions', { method: 'DELETE' })
+    if (!response.ok) {
+      setError(await errorMessage(response))
+      return
+    }
+    const body = (await response.json()) as { text: string; default: string }
+    setText(body.text)
+    setFallback(body.default)
+    setMessage('Restored.')
+  }
+
+  return (
+    <form onSubmit={save}>
+      <label>
+        MCP instructions
+        <textarea className="instructions" value={text} onChange={(event) => setText(event.target.value)} />
+      </label>
+      {error ? <p className="error">{error}</p> : null}
+      {message ? <p>{message}</p> : <p>Sent to the model on each connection. Reset restores the generated text.</p>}
+      <div className="actions">
+        <button type="submit">Save</button>
+        <button type="button" className="reset" disabled={text === fallback} onClick={() => void reset()}>
+          Reset
+        </button>
+      </div>
+    </form>
+  )
+}
+
+function ListenPort() {
+  const [port, setPort] = useState('8765')
+  const [current, setCurrent] = useState(0)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fetch('/api/settings/port')
+        .then(async (response) => {
+          if (!response.ok) {
+            setError(await errorMessage(response))
+            return
+          }
+          const body = (await response.json()) as { port: number; current: number }
+          setPort(String(body.port))
+          setCurrent(body.current)
+        })
+        .catch(() => setError('Could not load the port'))
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    setMessage('')
+    setError('')
+    const response = await fetch('/api/settings/port', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ port: Number(port) }),
+    })
+    if (!response.ok) {
+      setError(await errorMessage(response))
+      return
+    }
+    const body = (await response.json()) as { port: number; current: number }
+    setPort(String(body.port))
+    setCurrent(body.current)
+    setMessage(body.port === body.current ? 'Saved.' : 'Saved. GateKeep uses this port the next time it starts.')
+  }
+
+  return (
+    <form onSubmit={save}>
+      <label>
+        Port
+        <input
+          type="number"
+          min={1}
+          max={65535}
+          required
+          value={port}
+          onChange={(event) => setPort(event.target.value)}
+        />
+      </label>
+      {error ? <p className="error">{error}</p> : null}
+      {message ? <p>{message}</p> : <p>This run is listening on {current || '…'}.</p>}
+      <button type="submit">Save</button>
+    </form>
+  )
 }
 
 function ExecutionTimeout() {
