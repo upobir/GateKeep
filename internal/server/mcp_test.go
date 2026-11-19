@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"gatekeep/internal/db"
+	"gatekeep/internal/mcp"
 )
 
 func TestMCPLegacyMockTool(t *testing.T) {
@@ -48,7 +50,7 @@ func TestMCPLegacyMockTool(t *testing.T) {
 		t.Fatalf("protocol = %v", result["protocolVersion"])
 	}
 	instructions, _ := result["instructions"].(string)
-	if !strings.Contains(instructions, "approve") || !strings.Contains(instructions, srv.URL()) || !strings.Contains(instructions, "person can read it") {
+	if !strings.Contains(instructions, "approve") || !strings.Contains(instructions, srv.URL()) || !strings.Contains(instructions, "user can read it") {
 		t.Fatalf("instructions = %q", instructions)
 	}
 
@@ -69,6 +71,7 @@ func TestMCPLegacyMockTool(t *testing.T) {
 	listBody := decodeRPC(t, listResp)
 	mock := findMockTool(t, listBody)
 
+	decided := decideWhenPending(srv, store, 1, db.ToolCallApproved, db.DecisionApprove, "")
 	callResp := mcpPost(t, srv, session, "2025-11-25", map[string]any{
 		"jsonrpc": "2.0",
 		"id":      3,
@@ -82,6 +85,9 @@ func TestMCPLegacyMockTool(t *testing.T) {
 			},
 		},
 	})
+	if err := <-decided; err != nil {
+		t.Fatal(err)
+	}
 	if callResp.StatusCode != http.StatusOK {
 		t.Fatalf("call status = %d", callResp.StatusCode)
 	}
@@ -90,10 +96,11 @@ func TestMCPLegacyMockTool(t *testing.T) {
 	if strings.Contains(text, "super-secret-token") || strings.Contains(string(mustJSON(callBody)), "super-secret-token") {
 		t.Fatal("response exposed a secret")
 	}
-	if !strings.Contains(text, srv.URL()+"/approval/") {
-		t.Fatalf("result = %q", text)
+	outcome := decodeOutcome(t, text)
+	if outcome.OK || outcome.Kind != "tool_call_error" || outcome.Error != "locked" {
+		t.Fatalf("outcome = %+v", outcome)
 	}
-	if !strings.Contains(text, "has not executed") {
+	if callBody["result"].(map[string]any)["isError"] != true {
 		t.Fatalf("result = %q", text)
 	}
 
@@ -101,7 +108,7 @@ func TestMCPLegacyMockTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != "pending" || stored.Command != "PING" || stored.Reason != "check that the resource is reachable" {
+	if stored.Status != db.ToolCallApproved || stored.Command != "PING" || stored.Reason != "check that the resource is reachable" {
 		t.Fatalf("stored = %+v", stored)
 	}
 	if stored.ResourceName != "local" || stored.HarnessName != "Claude Desktop" {
@@ -147,6 +154,7 @@ func TestMCPModernMockTool(t *testing.T) {
 	})
 	findMockTool(t, decodeRPC(t, listResp))
 
+	decided := decideWhenPending(srv, store, 1, db.ToolCallRejected, db.DecisionReject, "too broad")
 	callResp := mcpPostModern(t, srv, "tools/call", "mock", map[string]any{
 		"jsonrpc": "2.0",
 		"id":      3,
@@ -157,15 +165,23 @@ func TestMCPModernMockTool(t *testing.T) {
 			"reason":   "check the mock resource",
 		}),
 	})
-	text := toolText(t, decodeRPC(t, callResp))
-	if !strings.Contains(text, srv.URL()+"/approval/1") {
+	if err := <-decided; err != nil {
+		t.Fatal(err)
+	}
+	callBody := decodeRPC(t, callResp)
+	text := toolText(t, callBody)
+	outcome := decodeOutcome(t, text)
+	if outcome.OK || outcome.Kind != "user_rejected" || outcome.Reason != "too broad" || outcome.Error != "" {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	if callBody["result"].(map[string]any)["isError"] != true {
 		t.Fatalf("result = %q", text)
 	}
 	stored, err := store.GetToolCall(context.Background(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.HarnessName != "Example Client" || stored.Command != "PING" {
+	if stored.HarnessName != "Example Client" || stored.Command != "PING" || stored.Status != db.ToolCallRejected {
 		t.Fatalf("stored = %+v", stored)
 	}
 }
@@ -357,6 +373,24 @@ func TestMCPRejectsUnknownResourceAndOrigin(t *testing.T) {
 	}
 }
 
+func decideWhenPending(srv *Server, store *db.Store, id int64, status, decision, reason string) <-chan error {
+	errCh := make(chan error, 1)
+	go func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			call, err := store.GetToolCall(context.Background(), id)
+			if err == nil && call.Status == db.ToolCallPending {
+				_, err = srv.decideApproval(context.Background(), id, status, decision, reason)
+				errCh <- err
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		errCh <- fmt.Errorf("tool call %d was not queued", id)
+	}()
+	return errCh
+}
+
 func openMCPStore(t *testing.T) *db.Store {
 	t.Helper()
 	store, err := db.Open(filepath.Join(t.TempDir(), "gatekeep.db"))
@@ -517,6 +551,15 @@ func findMockTool(t *testing.T, body map[string]any) map[string]any {
 	}
 	t.Fatal("mock tool was not listed")
 	return nil
+}
+
+func decodeOutcome(t *testing.T, text string) mcp.Outcome {
+	t.Helper()
+	var outcome mcp.Outcome
+	if err := json.Unmarshal([]byte(text), &outcome); err != nil {
+		t.Fatalf("text = %s", text)
+	}
+	return outcome
 }
 
 func toolText(t *testing.T, body map[string]any) string {

@@ -5,8 +5,26 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
+
+const (
+	ToolCallPending  = "pending"
+	ToolCallApproved = "approved"
+	ToolCallRejected = "rejected"
+	ToolCallExpired  = "expired"
+
+	DecisionApprove = "approve"
+	DecisionReject  = "reject"
+	DecisionExpire  = "expire"
+
+	ExecutionOK    = "ok"
+	ExecutionError = "error"
+)
+
+// ErrNotPending means the tool call was already approved, rejected, or expired.
+var ErrNotPending = errors.New("tool call is no longer pending")
 
 type ToolCall struct {
 	ID              int64
@@ -92,6 +110,95 @@ func (s *Store) UpdateToolCall(ctx context.Context, call ToolCall) error {
 		return err
 	}
 	return rowsAffected(result)
+}
+
+func (s *Store) ListPendingToolCalls(ctx context.Context) ([]ToolCall, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, resource_id, resource_name, harness_id, harness_name,
+			command, reason, status, decision, decision_reason,
+			execution_status, result, created_at, updated_at, decided_at, finished_at
+		FROM tool_calls
+		WHERE status = ?
+		ORDER BY created_at, id
+	`, ToolCallPending)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var calls []ToolCall
+	for rows.Next() {
+		call, err := scanToolCall(rows)
+		if err != nil {
+			return nil, err
+		}
+		calls = append(calls, call)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if calls == nil {
+		calls = []ToolCall{}
+	}
+	return calls, nil
+}
+
+// ResolveToolCall moves a pending tool call to a terminal queue state.
+// finish sets finished_at. Approval does not finish the call; execution does.
+func (s *Store) ResolveToolCall(ctx context.Context, id int64, status, decision, reason string, finish bool) (ToolCall, error) {
+	if status == "" || status == ToolCallPending || decision == "" {
+		return ToolCall{}, fmt.Errorf("tool call resolution is incomplete")
+	}
+	now := time.Now().UTC()
+	var decisionReason any
+	if trimmed := strings.TrimSpace(reason); trimmed != "" {
+		decisionReason = trimmed
+	}
+	var finishedAt any
+	if finish {
+		finishedAt = formatTime(now)
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE tool_calls SET
+			status = ?,
+			decision = ?,
+			decision_reason = ?,
+			updated_at = ?,
+			decided_at = ?,
+			finished_at = ?
+		WHERE id = ? AND status = ?
+	`, status, decision, decisionReason, formatTime(now), formatTime(now), finishedAt, id, ToolCallPending)
+	if err != nil {
+		return ToolCall{}, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return ToolCall{}, err
+	}
+	if count == 0 {
+		if _, err := s.GetToolCall(ctx, id); err != nil {
+			return ToolCall{}, err
+		}
+		return ToolCall{}, ErrNotPending
+	}
+	return s.GetToolCall(ctx, id)
+}
+
+// ExpirePendingToolCalls closes every pending call. A restarted process has no
+// harness still waiting on those requests.
+func (s *Store) ExpirePendingToolCalls(ctx context.Context, reason string) error {
+	now := time.Now().UTC()
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE tool_calls SET
+			status = ?,
+			decision = ?,
+			decision_reason = ?,
+			updated_at = ?,
+			decided_at = ?,
+			finished_at = ?
+		WHERE status = ?
+	`, ToolCallExpired, DecisionExpire, reason, formatTime(now), formatTime(now), formatTime(now), ToolCallPending)
+	return err
 }
 
 func (s *Store) DeleteToolCall(ctx context.Context, id int64) error {

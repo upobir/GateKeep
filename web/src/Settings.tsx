@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { errorMessage, type AuthInfo } from './auth.ts'
 
 export function Settings({ auth, onChange }: { auth: AuthInfo; onChange: () => void }) {
@@ -26,21 +26,81 @@ export function Settings({ auth, onChange }: { auth: AuthInfo; onChange: () => v
   const until = auth.expiresAt ? new Date(auth.expiresAt).toLocaleTimeString() : ''
 
   return (
-    <form className="settings" onSubmit={save}>
-      {until ? <p>Unlocked until {until}.</p> : null}
+    <div className="settings">
+      <form onSubmit={save}>
+        {until ? <p>Unlocked until {until}.</p> : null}
+        <label>
+          Unlock duration (minutes)
+          <input
+            type="number"
+            min={1}
+            max={1440}
+            required
+            value={minutes}
+            onChange={(event) => setMinutes(event.target.value)}
+          />
+        </label>
+        {error ? <p className="error">{error}</p> : null}
+        {message ? <p>{message}</p> : <p>Applies the next time you unlock.</p>}
+        <button type="submit">Save</button>
+      </form>
+      <ApprovalTimeout />
+    </div>
+  )
+}
+
+function ApprovalTimeout() {
+  const [seconds, setSeconds] = useState('300')
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fetch('/api/settings/approval-timeout')
+        .then(async (response) => {
+          if (!response.ok) {
+            setError(await errorMessage(response))
+            return
+          }
+          const body = (await response.json()) as { seconds: number }
+          setSeconds(String(body.seconds))
+        })
+        .catch(() => setError('Could not load the approval timeout'))
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    setMessage('')
+    setError('')
+    const response = await fetch('/api/settings/approval-timeout', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seconds: Number(seconds) }),
+    })
+    if (!response.ok) {
+      setError(await errorMessage(response))
+      return
+    }
+    setMessage('Saved. Requests already waiting use this timeout too.')
+  }
+
+  return (
+    <form onSubmit={save}>
       <label>
-        Unlock duration (minutes)
+        Approval timeout (seconds)
         <input
           type="number"
           min={1}
-          max={1440}
+          max={86400}
           required
-          value={minutes}
-          onChange={(event) => setMinutes(event.target.value)}
+          value={seconds}
+          onChange={(event) => setSeconds(event.target.value)}
         />
       </label>
       {error ? <p className="error">{error}</p> : null}
-      {message ? <p>{message}</p> : <p>Applies the next time you unlock.</p>}
+      {message ? <p>{message}</p> : <p>A request expires if nobody approves it in this time.</p>}
       <button type="submit">Save</button>
     </form>
   )

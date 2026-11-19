@@ -34,6 +34,9 @@ type Server struct {
 
 	sessionsMu sync.Mutex
 	sessions   map[string]mcpSession
+
+	approvalsMu sync.Mutex
+	approvals   map[int64]chan db.ToolCall
 }
 
 func New(port int, store *db.Store) (*Server, error) {
@@ -59,13 +62,14 @@ func New(port int, store *db.Store) (*Server, error) {
 
 	baseCtx, stopBase := context.WithCancel(context.Background())
 	srv := &Server{
-		url:      "http://" + listener.Addr().String(),
-		listener: listener,
-		store:    store,
-		hub:      newHub(),
-		baseCtx:  baseCtx,
-		stopBase: stopBase,
-		sessions: make(map[string]mcpSession),
+		url:       "http://" + listener.Addr().String(),
+		listener:  listener,
+		store:     store,
+		hub:       newHub(),
+		baseCtx:   baseCtx,
+		stopBase:  stopBase,
+		sessions:  make(map[string]mcpSession),
+		approvals: make(map[int64]chan db.ToolCall),
 	}
 	plugins, err := builtin.New()
 	if err != nil {
@@ -75,6 +79,10 @@ func New(port int, store *db.Store) (*Server, error) {
 	srv.plugins = plugins
 	if store != nil {
 		srv.vault = vault.New(store)
+		if err := store.ExpirePendingToolCalls(context.Background(), restartExpiryReason); err != nil {
+			listener.Close()
+			return nil, err
+		}
 	}
 
 	mux := http.NewServeMux()
@@ -83,6 +91,12 @@ func New(port int, store *db.Store) (*Server, error) {
 	mux.HandleFunc("POST /api/unlock", srv.handleUnlock)
 	mux.HandleFunc("POST /api/lock", srv.requireSession(srv.handleLock))
 	mux.HandleFunc("PUT /api/settings/unlock-duration", srv.requireSession(srv.handleUnlockDuration))
+	mux.HandleFunc("GET /api/settings/approval-timeout", srv.requireSession(srv.handleGetApprovalTimeout))
+	mux.HandleFunc("PUT /api/settings/approval-timeout", srv.requireSession(srv.handlePutApprovalTimeout))
+	mux.HandleFunc("GET /api/approvals", srv.requireSession(srv.handleListApprovals))
+	mux.HandleFunc("GET /api/approvals/{id}", srv.requireSession(srv.handleGetApproval))
+	mux.HandleFunc("POST /api/approvals/{id}/approve", srv.requireSession(srv.handleApprove))
+	mux.HandleFunc("POST /api/approvals/{id}/reject", srv.requireSession(srv.handleReject))
 	mux.HandleFunc("GET /api/health", srv.requireSession(srv.handleHealth))
 	mux.HandleFunc("GET /api/events", srv.requireSession(srv.handleEvents))
 	mux.HandleFunc("GET /api/resource-types", srv.requireSession(srv.handleResourceTypes))
@@ -113,6 +127,7 @@ func (s *Server) Serve() error {
 	defer cancel()
 	go s.watchHealth(ctx)
 	go s.watchSession(ctx)
+	go s.watchApprovals(ctx)
 
 	err := s.http.Serve(s.listener)
 	if errors.Is(err, http.ErrServerClosed) {

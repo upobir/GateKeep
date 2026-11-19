@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { postJSON, type AuthInfo } from './auth.ts'
+import { Queue } from './Queue.tsx'
 import { Resources } from './resources/Resources.tsx'
 import { Settings } from './Settings.tsx'
 import { useLiveStatus } from './status.ts'
@@ -31,10 +32,23 @@ function usePath() {
   return { path, go }
 }
 
+function approvalID(path: string): number | null {
+  const prefix = '/approval/'
+  if (!path.startsWith(prefix)) {
+    return null
+  }
+  const raw = path.slice(prefix.length)
+  if (!/^[1-9]\d*$/.test(raw)) {
+    return null
+  }
+  return Number(raw)
+}
+
 export function Shell({ auth, onChange }: { auth: AuthInfo; onChange: () => void }) {
   const { path, go } = usePath()
-  const status = useLiveStatus(onChange)
-  const page = pages.find((item) => item.path === path)
+  const { status, queueTick } = useLiveStatus(onChange)
+  const focusID = approvalID(path)
+  const page = focusID != null ? pages[0] : pages.find((item) => item.path === path)
 
   async function lock() {
     await postJSON('/api/lock', {})
@@ -51,7 +65,7 @@ export function Shell({ auth, onChange }: { auth: AuthInfo; onChange: () => void
               key={item.path}
               type="button"
               className="nav-button"
-              aria-current={item.path === path ? 'page' : undefined}
+              aria-current={item.path === path || (item.path === '/' && focusID != null) ? 'page' : undefined}
               onClick={() => go(item.path)}
             >
               {item.label}
@@ -72,7 +86,9 @@ export function Shell({ auth, onChange }: { auth: AuthInfo; onChange: () => void
           <Settings auth={auth} onChange={onChange} />
         ) : path === '/resources' ? (
           <Resources />
-        ) : page ? (
+        ) : path === '/' || focusID != null ? (
+          <Queue focusID={focusID} tick={queueTick} />
+        ) : path === '/history' ? (
           <p>Nothing here yet.</p>
         ) : (
           <p>That page does not exist.</p>

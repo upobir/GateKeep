@@ -15,7 +15,7 @@ type Field struct {
 
 // Info is the public description of a resource type.
 // ToolDescription says what the tool does. CommandDescription says which
-// commands that type accepts and how to write one a person can read.
+// commands that type accepts and how to write one the user can read.
 // Neither field mentions approval. The MCP instructions cover that.
 type Info struct {
 	Type               string  `json:"type"`
@@ -30,6 +30,9 @@ type Info struct {
 type Plugin interface {
 	Info() Info
 	Test(ctx context.Context, config, secrets map[string]string) error
+	// Execute runs one approved command. The result is returned to the harness.
+	// An error means the command did not run.
+	Execute(ctx context.Context, command string, config, secrets map[string]string) (any, error)
 }
 
 // Registry is the list of resource types the application knows.

@@ -48,9 +48,10 @@ type toolContent struct {
 }
 
 type toolResult struct {
-	ResultType string        `json:"resultType,omitempty"`
-	Content    []toolContent `json:"content"`
-	IsError    bool          `json:"isError"`
+	ResultType        string        `json:"resultType,omitempty"`
+	Content           []toolContent `json:"content"`
+	StructuredContent any           `json:"structuredContent,omitempty"`
+	IsError           bool          `json:"isError"`
 }
 
 func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
@@ -162,7 +163,7 @@ func (s *Server) handleModernMCP(w http.ResponseWriter, r *http.Request, req rpc
 			"resultType":        "complete",
 			"supportedVersions": []string{mcp.ModernVersion},
 			"capabilities":      map[string]any{"tools": map[string]any{"listChanged": false}},
-			"instructions":      mcp.Instructions(s.url),
+			"instructions":      mcp.Instructions(s.url, s.approvalTimeout(r.Context())),
 			"_meta": map[string]any{
 				"io.modelcontextprotocol/serverInfo": map[string]any{
 					"name":    mcp.ServerName,
@@ -250,7 +251,7 @@ func (s *Server) mcpInitialize(w http.ResponseWriter, req rpcRequest) {
 			"name":    mcp.ServerName,
 			"version": mcp.ServerVersion,
 		},
-		"instructions": mcp.Instructions(s.url),
+		"instructions": mcp.Instructions(s.url, s.approvalTimeout(context.Background())),
 	})
 }
 
@@ -272,7 +273,7 @@ func (s *Server) queueToolCall(w http.ResponseWriter, r *http.Request, req rpcRe
 	call, err := mcp.DecodeCall(req.Params)
 	var rejected *mcp.Reject
 	if errors.As(err, &rejected) {
-		s.writeToolResult(w, req.ID, rejected.Text, true, modern)
+		s.writeToolResult(w, req.ID, rejected.Text, nil, true, modern)
 		return
 	}
 	if err != nil {
@@ -290,7 +291,7 @@ func (s *Server) queueToolCall(w http.ResponseWriter, r *http.Request, req rpcRe
 
 	resource, err := s.store.ResourceByName(r.Context(), call.Resource)
 	if errors.Is(err, db.ErrNotFound) {
-		s.writeToolResult(w, req.ID, "unknown resource "+call.Resource, true, modern)
+		s.writeToolResult(w, req.ID, "unknown resource "+call.Resource, nil, true, modern)
 		return
 	}
 	if err != nil {
@@ -298,7 +299,7 @@ func (s *Server) queueToolCall(w http.ResponseWriter, r *http.Request, req rpcRe
 		return
 	}
 	if resource.Type != call.Name {
-		s.writeToolResult(w, req.ID, fmt.Sprintf("resource %s is %s, not %s", resource.Name, resource.Type, call.Name), true, modern)
+		s.writeToolResult(w, req.ID, fmt.Sprintf("resource %s is %s, not %s", resource.Name, resource.Type, call.Name), nil, true, modern)
 		return
 	}
 
@@ -314,13 +315,13 @@ func (s *Server) queueToolCall(w http.ResponseWriter, r *http.Request, req rpcRe
 		HarnessName:  harness.Name,
 		Command:      call.Command,
 		Reason:       call.Reason,
-		Status:       "pending",
+		Status:       db.ToolCallPending,
 	})
 	if err != nil {
 		writeRPCError(w, http.StatusInternalServerError, req.ID, mcp.CodeInternal, "could not queue the request", nil)
 		return
 	}
-	s.writeToolResult(w, req.ID, mcp.QueuedText(resource.Name, s.approvalURL(stored.ID)), false, modern)
+	s.waitForApproval(w, r, req.ID, stored.ID, modern)
 }
 
 func (s *Server) writeToolList(w http.ResponseWriter, r *http.Request, id json.RawMessage, modern bool) {
@@ -354,10 +355,11 @@ func (s *Server) approvalURL(id int64) string {
 	return s.url + "/approval/" + strconv.FormatInt(id, 10)
 }
 
-func (s *Server) writeToolResult(w http.ResponseWriter, id json.RawMessage, text string, isError, modern bool) {
+func (s *Server) writeToolResult(w http.ResponseWriter, id json.RawMessage, text string, structured any, isError, modern bool) {
 	result := toolResult{
-		Content: []toolContent{{Type: "text", Text: text}},
-		IsError: isError,
+		Content:           []toolContent{{Type: "text", Text: text}},
+		StructuredContent: structured,
+		IsError:           isError,
 	}
 	if modern {
 		result.ResultType = "complete"

@@ -182,6 +182,89 @@ func TestDeletingResourceKeepsToolCallSnapshot(t *testing.T) {
 	}
 }
 
+func TestPendingToolCallsResolveOnceInOrder(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t, filepath.Join(t.TempDir(), "gatekeep.db"))
+	defer store.Close()
+
+	first, err := store.CreateToolCall(ctx, ToolCall{
+		ResourceName: "orders",
+		HarnessName:  "Claude",
+		Command:      "SELECT 1",
+		Reason:       "first",
+		Status:       ToolCallPending,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.CreateToolCall(ctx, ToolCall{
+		ResourceName: "orders",
+		HarnessName:  "Claude",
+		Command:      "SELECT 2",
+		Reason:       "second",
+		Status:       ToolCallPending,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pending, err := store.ListPendingToolCalls(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 2 || pending[0].ID != first.ID || pending[1].ID != second.ID {
+		t.Fatalf("pending = %+v", pending)
+	}
+
+	approved, err := store.ResolveToolCall(ctx, first.ID, ToolCallApproved, DecisionApprove, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved.Status != ToolCallApproved || approved.FinishedAt != nil || approved.DecidedAt == nil {
+		t.Fatalf("approved = %+v", approved)
+	}
+	if _, err := store.ResolveToolCall(ctx, first.ID, ToolCallRejected, DecisionReject, "no", true); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("second resolve = %v", err)
+	}
+
+	rejected, err := store.ResolveToolCall(ctx, second.ID, ToolCallRejected, DecisionReject, "too broad", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rejected.Status != ToolCallRejected || rejected.DecisionReason == nil || *rejected.DecisionReason != "too broad" || rejected.FinishedAt == nil {
+		t.Fatalf("rejected = %+v", rejected)
+	}
+
+	left, err := store.ListPendingToolCalls(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 0 {
+		t.Fatalf("pending = %+v", left)
+	}
+
+	third, err := store.CreateToolCall(ctx, ToolCall{
+		ResourceName: "orders",
+		HarnessName:  "Claude",
+		Command:      "SELECT 3",
+		Reason:       "third",
+		Status:       ToolCallPending,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ExpirePendingToolCalls(ctx, "GateKeep restarted before the user decided."); err != nil {
+		t.Fatal(err)
+	}
+	expired, err := store.GetToolCall(ctx, third.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expired.Status != ToolCallExpired || expired.DecisionReason == nil || *expired.DecisionReason != "GateKeep restarted before the user decided." {
+		t.Fatalf("expired = %+v", expired)
+	}
+}
+
 func TestDefaultPath(t *testing.T) {
 	path, err := DefaultPath()
 	if err != nil {

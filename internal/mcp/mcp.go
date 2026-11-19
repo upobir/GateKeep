@@ -1,12 +1,13 @@
 // Package mcp is the Model Context Protocol surface for resource tools.
 // A resource type is exposed only when at least one resource of that type is saved.
-// A call does not run the command; it asks a person to approve it.
+// A call does not run the command; it asks the user to approve it.
 package mcp
 
 import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"gatekeep/internal/plugin"
 )
@@ -31,9 +32,20 @@ const (
 )
 
 // Instructions is the guidance sent to the model.
-// Later, mention execution timeouts and the approval timeout once those settings exist.
-func Instructions(appURL string) string {
-	return fmt.Sprintf("Every tool call waits for a person to approve it in GateKeep. The command does not run until then. Write the command so a person can read it, because a person checks it before approving. Call the tool for the resource type and pass one of that tool's resource names, the command, and a one-line reason. GateKeep is at %s. Give the user that link when they need to approve a request. The tool response also includes a link to the specific request. Do not claim the command ran.", appURL)
+// Later, mention execution timeouts once that setting exists.
+func Instructions(appURL string, approvalWait time.Duration) string {
+	return fmt.Sprintf("Every tool call waits for the user to approve it in GateKeep. The command does not run until then. Write the command so the user can read it, because the user checks it before approving. Call the tool for the resource type and pass one of that tool's resource names, the command, and a one-line reason. A request expires if the user does not approve it within %s, and the command does not run. GateKeep is at %s. Give the user that link when they need to approve a request. The tool result includes a link to the specific request. Do not claim the command ran.", approvalPhrase(approvalWait), appURL)
+}
+
+func approvalPhrase(wait time.Duration) string {
+	seconds := int(wait / time.Second)
+	if seconds == 1 {
+		return "1 second"
+	}
+	if seconds > 1 {
+		return fmt.Sprintf("%d seconds", seconds)
+	}
+	return "300 seconds"
 }
 
 // LegacyVersions are the initialize-handshake revisions this server accepts.
@@ -45,10 +57,69 @@ var LegacyVersions = map[string]bool{
 
 // Tool is one MCP tool, built from a resource plugin.
 type Tool struct {
-	Name        string         `json:"name"`
-	Title       string         `json:"title"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"inputSchema"`
+	Name         string         `json:"name"`
+	Title        string         `json:"title"`
+	Description  string         `json:"description"`
+	InputSchema  map[string]any `json:"inputSchema"`
+	OutputSchema map[string]any `json:"outputSchema,omitempty"`
+}
+
+// Outcome is the tools/call result.
+// ok is false when the tool call failed. kind tool_call_error means the command itself failed.
+type Outcome struct {
+	OK     bool   `json:"ok"`
+	Kind   string `json:"kind"`
+	Result any    `json:"result,omitempty"`
+	Error  string `json:"error,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// OutputSchema is the JSON Schema for Outcome.
+func OutputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"ok": map[string]any{
+				"type":        "boolean",
+				"description": "False when this tool call failed.",
+			},
+			"kind": map[string]any{
+				"type":        "string",
+				"enum":        []string{"tool_call_successful", "tool_call_error", "user_rejected", "approval_expired"},
+				"description": "tool_call_successful when the command ran. tool_call_error when the command failed. user_rejected or approval_expired when the user did not let it run.",
+			},
+			"result": map[string]any{
+				"description": "Value returned by the command. Present only when ok is true.",
+			},
+			"error": map[string]any{
+				"type":        "string",
+				"description": "Why the command failed, or why the request expired.",
+			},
+			"reason": map[string]any{
+				"type":        "string",
+				"description": "Why the user rejected the command.",
+			},
+		},
+		"required":             []string{"ok", "kind"},
+		"additionalProperties": false,
+	}
+}
+
+// Ran is a successful command result.
+func Ran(result any) Outcome {
+	return Outcome{OK: true, Kind: "tool_call_successful", Result: result}
+}
+
+// Failed is a tool call that did not produce a result.
+// kind is tool_call_error when the command itself failed.
+func Failed(kind, err string) Outcome {
+	return Outcome{OK: false, Kind: kind, Error: err}
+}
+
+// JSON is the raw text form of an outcome.
+func (o Outcome) JSON() string {
+	raw, _ := json.Marshal(o)
+	return string(raw)
 }
 
 // Call is a tools/call invocation after its arguments have been checked.
@@ -80,9 +151,10 @@ func Tools(infos []plugin.Info, namesByType map[string][]string) []Tool {
 			continue
 		}
 		tools = append(tools, Tool{
-			Name:        info.Type,
-			Title:       info.Label,
-			Description: info.ToolDescription,
+			Name:         info.Type,
+			Title:        info.Label,
+			Description:  info.ToolDescription,
+			OutputSchema: OutputSchema(),
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -218,15 +290,6 @@ func ParamName(params json.RawMessage) (string, bool) {
 		return "", false
 	}
 	return *body.Name, true
-}
-
-// QueuedText is the tool result while a person still has to approve the command.
-func QueuedText(resourceName, approvalURL string) string {
-	return fmt.Sprintf(
-		"Queued for human approval. This command has not executed.\nResource: %s\nApproval: %s\nA person must approve or reject it in the GateKeep web UI before it can run.",
-		resourceName,
-		approvalURL,
-	)
 }
 
 // HarnessName keeps a client name safe to store and show.

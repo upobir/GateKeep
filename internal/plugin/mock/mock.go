@@ -32,3 +32,11 @@ func (Plugin) Test(_ context.Context, config, secrets map[string]string) error {
 	}
 	return nil
 }
+
+// Execute returns true when the saved token is ok.
+func (Plugin) Execute(_ context.Context, _ string, _ map[string]string, secrets map[string]string) (any, error) {
+	if secrets["token"] != "ok" {
+		return nil, errors.New("mock token was rejected")
+	}
+	return true, nil
+}

@@ -5,11 +5,12 @@ export type LiveStatus = {
   database: 'up' | 'down' | 'unknown'
 }
 
-export function useLiveStatus(onLock: () => void): LiveStatus {
+export function useLiveStatus(onLock: () => void): { status: LiveStatus; queueTick: number } {
   const [status, setStatus] = useState<LiveStatus>({
     server: 'reconnecting',
     database: 'unknown',
   })
+  const [queueTick, setQueueTick] = useState(0)
 
   useEffect(() => {
     const source = new EventSource('/api/events')
@@ -38,8 +39,13 @@ export function useLiveStatus(onLock: () => void): LiveStatus {
       }
     }
 
+    function onApprovals() {
+      setQueueTick((current) => current + 1)
+    }
+
     source.addEventListener('status', onStatus)
     source.addEventListener('auth', onAuth)
+    source.addEventListener('approvals', onApprovals)
     source.onerror = () => {
       setStatus((current) => ({ ...current, server: 'reconnecting' }))
     }
@@ -47,9 +53,10 @@ export function useLiveStatus(onLock: () => void): LiveStatus {
     return () => {
       source.removeEventListener('status', onStatus)
       source.removeEventListener('auth', onAuth)
+      source.removeEventListener('approvals', onApprovals)
       source.close()
     }
   }, [onLock])
 
-  return status
+  return { status, queueTick }
 }
