@@ -174,7 +174,11 @@ func clearSessionCookie(w http.ResponseWriter) {
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	return readJSONLimit(w, r, dest, 4096)
+}
+
+func readJSONLimit(w http.ResponseWriter, r *http.Request, dest any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dest); err != nil {

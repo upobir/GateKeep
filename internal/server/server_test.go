@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -211,6 +212,135 @@ func TestHealthAndEvents(t *testing.T) {
 	after.Body.Close()
 	if after.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("health after a bad password = %d", after.StatusCode)
+	}
+}
+
+func TestResourceCRUDAndConnection(t *testing.T) {
+	store, err := db.Open(filepath.Join(t.TempDir(), "gatekeep.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	srv, err := New(0, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		srv.Shutdown(ctx)
+	})
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 15 * time.Second, Jar: jar}
+	setup, err := client.Post(srv.URL()+"/api/setup", "application/json", strings.NewReader(`{"password":"correct horse","confirm":"correct horse"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup.Body.Close()
+	if setup.StatusCode != http.StatusOK {
+		t.Fatalf("setup = %d", setup.StatusCode)
+	}
+
+	rejected, err := client.Post(srv.URL()+"/api/resources/test", "application/json", strings.NewReader(`{"type":"mock","config":{"host":"db.example"},"secrets":{"token":"no"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected.Body.Close()
+	if rejected.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("rejected test = %d", rejected.StatusCode)
+	}
+
+	created, err := client.Post(srv.URL()+"/api/resources", "application/json", strings.NewReader(`{"name":"local","type":"mock","config":{"host":"db.example"},"secrets":{"token":"ok"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view resourceView
+	if err := json.NewDecoder(created.Body).Decode(&view); err != nil {
+		created.Body.Close()
+		t.Fatal(err)
+	}
+	created.Body.Close()
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("create = %d", created.StatusCode)
+	}
+	if view.Config["host"] != "db.example" || !view.HasSecrets {
+		t.Fatalf("view = %+v", view)
+	}
+
+	list, err := client.Get(srv.URL() + "/api/resources")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(list.Body)
+	list.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "ok") {
+		t.Fatalf("secret leaked in list: %s", body)
+	}
+
+	one, err := client.Get(srv.URL() + fmt.Sprintf("/api/resources/%d", view.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oneBody, err := io.ReadAll(one.Body)
+	one.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.StatusCode != http.StatusOK || !strings.Contains(string(oneBody), `"token":"ok"`) {
+		t.Fatalf("edit resource = %d %s", one.StatusCode, oneBody)
+	}
+
+	stored, err := store.GetResource(context.Background(), view.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored.SecretsCiphertext), "token") {
+		t.Fatal("secret was stored in plaintext")
+	}
+
+	kept, err := client.Post(srv.URL()+"/api/resources/test", "application/json", strings.NewReader(fmt.Sprintf(`{"id":%d,"type":"mock","config":{"host":"db.example"},"secrets":{}}`, view.ID)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept.Body.Close()
+	if kept.StatusCode != http.StatusOK {
+		t.Fatalf("test with stored secret = %d", kept.StatusCode)
+	}
+
+	updated, err := http.NewRequest(http.MethodPut, srv.URL()+fmt.Sprintf("/api/resources/%d", view.ID), strings.NewReader(`{"name":"renamed","type":"mock","config":{"host":"other.example"},"secrets":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated.Header.Set("Content-Type", "application/json")
+	updateResp, err := client.Do(updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateResp.Body.Close()
+	if updateResp.StatusCode != http.StatusOK {
+		t.Fatalf("update = %d", updateResp.StatusCode)
+	}
+
+	deleted, err := http.NewRequest(http.MethodDelete, srv.URL()+fmt.Sprintf("/api/resources/%d", view.ID), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteResp, err := client.Do(deleted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteResp.Body.Close()
+	if deleteResp.StatusCode != http.StatusOK {
+		t.Fatalf("delete = %d", deleteResp.StatusCode)
 	}
 }
 

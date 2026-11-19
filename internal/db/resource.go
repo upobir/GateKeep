@@ -45,6 +45,33 @@ func (s *Store) CreateResource(ctx context.Context, resource Resource) (Resource
 	return resource, nil
 }
 
+func (s *Store) ListResources(ctx context.Context) ([]Resource, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, name, type, config_json, secrets_ciphertext, execution_timeout_ms, created_at, updated_at
+		FROM resources ORDER BY name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var resources []Resource
+	for rows.Next() {
+		resource, err := scanResource(rows)
+		if err != nil {
+			return nil, err
+		}
+		resources = append(resources, resource)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if resources == nil {
+		resources = []Resource{}
+	}
+	return resources, nil
+}
+
 func (s *Store) GetResource(ctx context.Context, id int64) (Resource, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, type, config_json, secrets_ciphertext, execution_timeout_ms, created_at, updated_at

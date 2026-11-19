@@ -12,6 +12,8 @@ import (
 	"sync"
 
 	"gatekeep/internal/db"
+	"gatekeep/internal/plugin"
+	"gatekeep/internal/plugin/builtin"
 	"gatekeep/internal/vault"
 	"gatekeep/internal/web"
 )
@@ -22,6 +24,7 @@ type Server struct {
 	listener net.Listener
 	store    *db.Store
 	vault    *vault.Service
+	plugins  *plugin.Registry
 	hub      *hub
 
 	shutdownOnce sync.Once
@@ -55,6 +58,12 @@ func New(port int, store *db.Store) (*Server, error) {
 		store:    store,
 		hub:      newHub(),
 	}
+	plugins, err := builtin.New()
+	if err != nil {
+		listener.Close()
+		return nil, err
+	}
+	srv.plugins = plugins
 	if store != nil {
 		srv.vault = vault.New(store)
 	}
@@ -67,6 +76,13 @@ func New(port int, store *db.Store) (*Server, error) {
 	mux.HandleFunc("PUT /api/settings/unlock-duration", srv.requireSession(srv.handleUnlockDuration))
 	mux.HandleFunc("GET /api/health", srv.requireSession(srv.handleHealth))
 	mux.HandleFunc("GET /api/events", srv.requireSession(srv.handleEvents))
+	mux.HandleFunc("GET /api/resource-types", srv.requireSession(srv.handleResourceTypes))
+	mux.HandleFunc("GET /api/resources", srv.requireSession(srv.handleListResources))
+	mux.HandleFunc("POST /api/resources", srv.requireSession(srv.handleCreateResource))
+	mux.HandleFunc("POST /api/resources/test", srv.requireSession(srv.handleTestResource))
+	mux.HandleFunc("GET /api/resources/{id}", srv.requireSession(srv.handleGetResource))
+	mux.HandleFunc("PUT /api/resources/{id}", srv.requireSession(srv.handleUpdateResource))
+	mux.HandleFunc("DELETE /api/resources/{id}", srv.requireSession(srv.handleDeleteResource))
 	mux.Handle("/", spaHandler(content))
 	srv.http = &http.Server{Handler: mux}
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { postJSON, type AuthInfo } from './auth.ts'
+import { Resources } from './resources/Resources.tsx'
 import { Settings } from './Settings.tsx'
 import { useLiveStatus } from './status.ts'
 
@@ -69,6 +70,8 @@ export function Shell({ auth, onChange }: { auth: AuthInfo; onChange: () => void
         <h1>{page ? page.label : 'Not found'}</h1>
         {path === '/settings' ? (
           <Settings auth={auth} onChange={onChange} />
+        ) : path === '/resources' ? (
+          <Resources />
         ) : page ? (
           <p>Nothing here yet.</p>
         ) : (

@@ -158,6 +158,8 @@ button {
 }
 
 input {
+  width: 100%;
+  box-sizing: border-box;
   padding: 0.5rem 0.6rem;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -165,13 +167,106 @@ input {
   color: inherit;
 }
 
-button[type='submit'] {
+button[type='submit'],
+button.primary,
+.form-actions button {
   padding: 0.5rem 0.7rem;
   border: 0;
   border-radius: 6px;
   background: var(--current);
   color: inherit;
   cursor: pointer;
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  line-height: 1.4;
+  padding: 0.5rem 2rem 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background-color: var(--panel);
+  color: inherit;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%238b919c' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.65rem center;
+  background-size: 0.75rem;
+  cursor: pointer;
+}
+
+select option {
+  background-color: var(--panel);
+  color: inherit;
+}
+
+.resources,
+.resource-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  max-width: 28rem;
+}
+
+.resource-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.resource-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.resource-row button {
+  margin-left: auto;
+}
+
+.resource-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.resource-view h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.resource-view dl {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin: 0;
+}
+
+.detail-field dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.detail-field dd {
+  margin: 0.15rem 0 0;
+}
+
+.secret-mask {
+  letter-spacing: 0.15em;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 button:disabled {
