@@ -72,6 +72,18 @@ func (s *Store) ListResources(ctx context.Context) ([]Resource, error) {
 	return resources, nil
 }
 
+func (s *Store) ResourceByName(ctx context.Context, name string) (Resource, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, name, type, config_json, secrets_ciphertext, execution_timeout_ms, created_at, updated_at
+		FROM resources WHERE name = ?
+	`, name)
+	resource, err := scanResource(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Resource{}, ErrNotFound
+	}
+	return resource, err
+}
+
 func (s *Store) GetResource(ctx context.Context, id int64) (Resource, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, type, config_json, secrets_ciphertext, execution_timeout_ms, created_at, updated_at

@@ -18,6 +18,8 @@ func (Plugin) Info() plugin.Info {
 			{Name: "host", Label: "Host"},
 			{Name: "token", Label: "Token", Secret: true},
 		},
+		ToolDescription:    "Runs one Mock command and returns sucess.",
+		CommandDescription: "One Mock command, such as PING. Put it on a single line.",
 	}
 }
 

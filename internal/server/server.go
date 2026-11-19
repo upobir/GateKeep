@@ -31,6 +31,9 @@ type Server struct {
 	stopBase     context.CancelFunc
 	shutdownOnce sync.Once
 	shutdownErr  error
+
+	sessionsMu sync.Mutex
+	sessions   map[string]mcpSession
 }
 
 func New(port int, store *db.Store) (*Server, error) {
@@ -62,6 +65,7 @@ func New(port int, store *db.Store) (*Server, error) {
 		hub:      newHub(),
 		baseCtx:  baseCtx,
 		stopBase: stopBase,
+		sessions: make(map[string]mcpSession),
 	}
 	plugins, err := builtin.New()
 	if err != nil {
@@ -88,6 +92,7 @@ func New(port int, store *db.Store) (*Server, error) {
 	mux.HandleFunc("GET /api/resources/{id}", srv.requireSession(srv.handleGetResource))
 	mux.HandleFunc("PUT /api/resources/{id}", srv.requireSession(srv.handleUpdateResource))
 	mux.HandleFunc("DELETE /api/resources/{id}", srv.requireSession(srv.handleDeleteResource))
+	mux.HandleFunc("/mcp", srv.handleMCP)
 	mux.Handle("/", spaHandler(content))
 	srv.http = &http.Server{
 		Handler: mux,

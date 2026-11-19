@@ -43,6 +43,7 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("listening on %s", srv.URL())
+	log.Printf("mcp %s/mcp", srv.URL())
 
 	go func() {
 		if err := srv.Serve(); err != nil {

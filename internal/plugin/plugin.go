@@ -14,10 +14,15 @@ type Field struct {
 }
 
 // Info is the public description of a resource type.
+// ToolDescription says what the tool does. CommandDescription says which
+// commands that type accepts and how to write one a person can read.
+// Neither field mentions approval. The MCP instructions cover that.
 type Info struct {
-	Type   string  `json:"type"`
-	Label  string  `json:"label"`
-	Fields []Field `json:"fields"`
+	Type               string  `json:"type"`
+	Label              string  `json:"label"`
+	Fields             []Field `json:"fields"`
+	ToolDescription    string  `json:"-"`
+	CommandDescription string  `json:"-"`
 }
 
 // Plugin is one resource type. A new type is a package that implements this
@@ -39,6 +44,9 @@ func New(plugins ...Plugin) (*Registry, error) {
 		info := item.Info()
 		if info.Type == "" || info.Label == "" {
 			return nil, fmt.Errorf("plugin type and label are required")
+		}
+		if info.ToolDescription == "" || info.CommandDescription == "" {
+			return nil, fmt.Errorf("plugin %s needs tool and command descriptions", info.Type)
 		}
 		if _, ok := registry.byType[info.Type]; ok {
 			return nil, fmt.Errorf("duplicate plugin %s", info.Type)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -35,6 +36,43 @@ func (s *Store) CreateHarness(ctx context.Context, name string) (Harness, error)
 		return Harness{}, err
 	}
 	return Harness{ID: id, Name: name, CreatedAt: now}, nil
+}
+
+func (s *Store) HarnessByName(ctx context.Context, name string) (Harness, error) {
+	var harness Harness
+	var createdAt string
+	err := s.db.QueryRowContext(ctx, `SELECT id, name, created_at FROM harnesses WHERE name = ?`, name).
+		Scan(&harness.ID, &harness.Name, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Harness{}, ErrNotFound
+	}
+	if err != nil {
+		return Harness{}, err
+	}
+	harness.CreatedAt, err = parseTime(createdAt)
+	if err != nil {
+		return Harness{}, err
+	}
+	return harness, nil
+}
+
+// EnsureHarness returns the harness with this name, creating it when absent.
+func (s *Store) EnsureHarness(ctx context.Context, name string) (Harness, error) {
+	existing, err := s.HarnessByName(ctx, name)
+	if err == nil {
+		return existing, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Harness{}, err
+	}
+	created, err := s.CreateHarness(ctx, name)
+	if err == nil {
+		return created, nil
+	}
+	if strings.Contains(err.Error(), "UNIQUE") {
+		return s.HarnessByName(ctx, name)
+	}
+	return Harness{}, err
 }
 
 func (s *Store) GetHarness(ctx context.Context, id int64) (Harness, error) {
