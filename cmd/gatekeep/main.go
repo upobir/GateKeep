@@ -33,7 +33,7 @@ func main() {
 	defer store.Close()
 	log.Printf("database %s", dbPath)
 
-	srv, err := server.New(*port)
+	srv, err := server.New(*port, store)
 	if err != nil {
 		log.Fatal(err)
 	}

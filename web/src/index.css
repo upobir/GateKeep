@@ -3,12 +3,26 @@
   font-family: system-ui, sans-serif;
   background: #f6f7f9;
   color: #1a1d24;
+  --line: #d8dce3;
+  --panel: #eef0f4;
+  --current: #e4e7ee;
+  --muted: #5d6573;
+  --up: #1f7a45;
+  --down: #a33b32;
+  --wait: #8a6a12;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     background: #14161b;
     color: #f3f4f6;
+    --line: #2c313b;
+    --panel: #1c1f26;
+    --current: #2a2f3a;
+    --muted: #b4bac6;
+    --up: #7dcea0;
+    --down: #e7a39c;
+    --wait: #e6c36a;
   }
 }
 
@@ -16,15 +30,93 @@ body {
   margin: 0;
 }
 
+.shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 13.5rem;
+  padding: 1rem 0.75rem;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.brand {
+  margin: 0 0.6rem 0.85rem;
+  font-weight: 650;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.nav-button {
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.nav-button[aria-current='page'] {
+  background: var(--current);
+}
+
+.status {
+  margin-top: auto;
+  padding: 0.75rem 0.6rem 0.25rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.35rem 0;
+}
+
+.status-value {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--wait);
+}
+
+.dot-up {
+  background: var(--up);
+}
+
+.dot-down,
+.dot-reconnecting {
+  background: var(--down);
+}
+
+.dot-unknown {
+  background: var(--wait);
+}
+
 main {
-  max-width: 40rem;
-  margin: 4rem auto;
-  padding: 0 1.5rem;
+  flex: 1;
+  padding: 1.5rem;
 }
 
 h1 {
   margin: 0 0 0.5rem;
-  font-size: 2rem;
+  font-size: 1.5rem;
 }
 
 p {

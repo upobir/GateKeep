@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"gatekeep/internal/db"
 	"gatekeep/internal/web"
 )
 
@@ -18,12 +19,14 @@ type Server struct {
 	url      string
 	http     *http.Server
 	listener net.Listener
+	store    *db.Store
+	hub      *hub
 
 	shutdownOnce sync.Once
 	shutdownErr  error
 }
 
-func New(port int) (*Server, error) {
+func New(port int, store *db.Store) (*Server, error) {
 	if port < 0 || port > 65535 {
 		return nil, fmt.Errorf("invalid port %d", port)
 	}
@@ -44,14 +47,20 @@ func New(port int) (*Server, error) {
 		return nil, fmt.Errorf("refusing to bind %s", listener.Addr())
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle("/", spaHandler(content))
-
-	return &Server{
+	srv := &Server{
 		url:      "http://" + listener.Addr().String(),
 		listener: listener,
-		http:     &http.Server{Handler: mux},
-	}, nil
+		store:    store,
+		hub:      newHub(),
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/health", srv.handleHealth)
+	mux.HandleFunc("GET /api/events", srv.handleEvents)
+	mux.Handle("/", spaHandler(content))
+	srv.http = &http.Server{Handler: mux}
+
+	return srv, nil
 }
 
 func (s *Server) URL() string {
@@ -59,6 +68,10 @@ func (s *Server) URL() string {
 }
 
 func (s *Server) Serve() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.watchHealth(ctx)
+
 	err := s.http.Serve(s.listener)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil

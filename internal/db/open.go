@@ -73,6 +73,10 @@ func (s *Store) configure() error {
 	return nil
 }
 
+func (s *Store) Ping() error {
+	return s.db.Ping()
+}
+
 func (s *Store) Close() error {
 	s.closeOnce.Do(func() {
 		s.closeErr = s.db.Close()
