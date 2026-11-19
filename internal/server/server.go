@@ -43,7 +43,8 @@ type Server struct {
 	execMu sync.Mutex
 	execs  map[int64]*executionRun
 
-	caches *cache.Store
+	caches   *cache.Store
+	notifier func(title, body, url string)
 }
 
 type executionRun struct {
@@ -157,6 +158,11 @@ func New(port int, store *db.Store) (*Server, error) {
 
 func (s *Server) URL() string {
 	return s.url
+}
+
+// SetNotifier reports each newly queued approval. A nil notifier reports nothing.
+func (s *Server) SetNotifier(fn func(title, body, url string)) {
+	s.notifier = fn
 }
 
 func (s *Server) Serve() error {

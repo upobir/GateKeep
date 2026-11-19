@@ -417,6 +417,17 @@ func (s *Server) unregisterApproval(id int64) {
 	s.approvalsMu.Unlock()
 }
 
+func (s *Server) notifyPending(call db.ToolCall) {
+	if s.notifier == nil {
+		return
+	}
+	body := call.HarnessName + " wants to run a command on " + call.ResourceName
+	if reason := strings.TrimSpace(call.Reason); reason != "" {
+		body += "\n" + reason
+	}
+	s.notifier("Approval needed", body, s.url)
+}
+
 func (s *Server) deliverApproval(call db.ToolCall) {
 	s.approvalsMu.Lock()
 	ch := s.approvals[call.ID]

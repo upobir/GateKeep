@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gatekeep/internal/db"
+	"gatekeep/internal/notify"
 	"gatekeep/internal/server"
 	"gatekeep/internal/tray"
 )
@@ -42,6 +43,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	srv.SetNotifier(notify.Send)
 	log.Printf("listening on %s", srv.URL())
 	log.Printf("mcp %s/mcp", srv.URL())
 
@@ -65,6 +67,7 @@ func main() {
 	tray.Run(tray.Options{
 		URL: srv.URL(),
 		OnReady: func() {
+			notify.Start()
 			close(ready)
 		},
 		OnQuit: func() {

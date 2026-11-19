@@ -321,6 +321,7 @@ func (s *Server) queueToolCall(w http.ResponseWriter, r *http.Request, req rpcRe
 		writeRPCError(w, http.StatusInternalServerError, req.ID, mcp.CodeInternal, "could not queue the request", nil)
 		return
 	}
+	s.notifyPending(stored)
 	s.waitForApproval(w, r, req.ID, stored.ID, modern)
 }
 
