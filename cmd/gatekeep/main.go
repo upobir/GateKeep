@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"gatekeep/internal/db"
 	"gatekeep/internal/server"
 	"gatekeep/internal/tray"
 )
@@ -20,6 +21,17 @@ func main() {
 	if *port < 1 || *port > 65535 {
 		log.Fatalf("invalid port %d", *port)
 	}
+
+	dbPath, err := db.DefaultPath()
+	if err != nil {
+		log.Fatal(err)
+	}
+	store, err := db.Open(dbPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer store.Close()
+	log.Printf("database %s", dbPath)
 
 	srv, err := server.New(*port)
 	if err != nil {
@@ -54,6 +66,9 @@ func main() {
 			defer cancel()
 			if err := srv.Shutdown(shutdownCtx); err != nil {
 				log.Printf("shutdown: %v", err)
+			}
+			if err := store.Close(); err != nil {
+				log.Printf("database: %v", err)
 			}
 		},
 	})
