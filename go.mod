@@ -4,12 +4,15 @@ go 1.25.0
 
 require (
 	github.com/getlantern/systray v1.2.2
+	github.com/go-sql-driver/mysql v1.9.3
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
+	golang.org/x/crypto v0.44.0
 	modernc.org/sqlite v1.59.0
 )
 
 require (
+	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/getlantern/context v0.0.0-20190109183933-c447772a6520 // indirect
 	github.com/getlantern/errors v0.0.0-20190325191628-abdb3e3e36f7 // indirect
@@ -23,7 +26,6 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	golang.org/x/crypto v0.44.0 // indirect
 	golang.org/x/image v0.0.0-20211028202545-6944b10bf410 // indirect
 	golang.org/x/net v0.46.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect

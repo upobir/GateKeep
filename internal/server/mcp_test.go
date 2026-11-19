@@ -229,13 +229,21 @@ func TestMCPToolsFollowSavedResources(t *testing.T) {
 		"id":      3,
 		"method":  "tools/list",
 	}))
-	if len(tools) != 1 || tools[0]["name"] != "mock" {
+	if len(tools) != 2 || tools[0]["name"] != "mock" || tools[1]["name"] != "mysql" {
 		t.Fatalf("tools = %v", tools)
 	}
-	properties := tools[0]["inputSchema"].(map[string]any)["properties"].(map[string]any)
-	enum := properties["resource"].(map[string]any)["enum"].([]any)
-	if len(enum) != 2 || enum[0] != "local" || enum[1] != "other" {
-		t.Fatalf("resource enum = %v", enum)
+	mockProperties := tools[0]["inputSchema"].(map[string]any)["properties"].(map[string]any)
+	mockEnum := mockProperties["resource"].(map[string]any)["enum"].([]any)
+	if len(mockEnum) != 2 || mockEnum[0] != "local" || mockEnum[1] != "other" {
+		t.Fatalf("mock resources = %v", mockEnum)
+	}
+	mysqlProperties := tools[1]["inputSchema"].(map[string]any)["properties"].(map[string]any)
+	mysqlEnum := mysqlProperties["resource"].(map[string]any)["enum"].([]any)
+	if len(mysqlEnum) != 1 || mysqlEnum[0] != "orders" {
+		t.Fatalf("mysql resources = %v", mysqlEnum)
+	}
+	if !strings.Contains(mysqlProperties["command"].(map[string]any)["description"].(string), "MySQL statement") {
+		t.Fatalf("command description = %v", mysqlProperties["command"])
 	}
 }
 

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { mockPlugin } from './mock.tsx'
+import { mysqlPlugin } from './mysql.tsx'
 
 export type ResourceValues = {
   config: Record<string, string>
@@ -22,7 +23,7 @@ export type ResourcePlugin = {
   Form: (props: ResourceValues) => ReactNode
 }
 
-export const resourcePlugins: ResourcePlugin[] = [mockPlugin]
+export const resourcePlugins: ResourcePlugin[] = [mockPlugin, mysqlPlugin]
 
 export function pluginFor(type: string): ResourcePlugin | undefined {
   return resourcePlugins.find((item) => item.type === type)
