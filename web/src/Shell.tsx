@@ -48,6 +48,7 @@ function approvalID(path: string): number | null {
 export function Shell({ auth, onChange }: { auth: AuthInfo; onChange: () => void }) {
   const { path, go } = usePath()
   const { status, queueTick } = useLiveStatus(onChange)
+  const pendingCount = usePendingCount(queueTick)
   const focusID = approvalID(path)
   const page = focusID != null ? pages[0] : pages.find((item) => item.path === path)
 
@@ -69,7 +70,12 @@ export function Shell({ auth, onChange }: { auth: AuthInfo; onChange: () => void
               aria-current={item.path === path || (item.path === '/' && focusID != null) ? 'page' : undefined}
               onClick={() => go(item.path)}
             >
-              {item.label}
+              <span>{item.label}</span>
+              {item.path === '/' && pendingCount > 0 ? (
+                <span className="nav-count" aria-label={`${pendingCount} pending`}>
+                  {pendingCount}
+                </span>
+              ) : null}
             </button>
           ))}
         </nav>
@@ -97,6 +103,28 @@ export function Shell({ auth, onChange }: { auth: AuthInfo; onChange: () => void
       </main>
     </div>
   )
+}
+
+function usePendingCount(tick: number) {
+  const [count, setCount] = useState(0)
+
+  useEffect(() => {
+    let stop = false
+    fetch('/api/approvals')
+      .then(async (response) => {
+        if (!response.ok || stop) {
+          return
+        }
+        const calls = (await response.json()) as { status: string }[]
+        setCount(calls.filter((call) => call.status === 'pending' || call.status === 'executing' || call.status === 'review').length)
+      })
+      .catch(() => {})
+    return () => {
+      stop = true
+    }
+  }, [tick])
+
+  return count
 }
 
 function StatusRow({ label, value }: { label: string; value: string }) {
