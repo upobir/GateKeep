@@ -529,7 +529,7 @@ func findMockTool(t *testing.T, body map[string]any) map[string]any {
 		schema := tool["inputSchema"].(map[string]any)
 		properties := schema["properties"].(map[string]any)
 		command := properties["command"].(map[string]any)
-		if command["description"] != "One Mock command: ping, loop, or break." {
+		if command["description"] != "One Mock command: ping, loop, break, or nextval. nextval returns the next integer from a sequence that starts at a random seed." {
 			t.Fatalf("command description = %v", command["description"])
 		}
 		resource := properties["resource"].(map[string]any)

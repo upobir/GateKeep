@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"gatekeep/internal/cache"
 	"gatekeep/internal/db"
 	"gatekeep/internal/plugin"
 	"gatekeep/internal/plugin/builtin"
@@ -41,6 +42,8 @@ type Server struct {
 
 	execMu sync.Mutex
 	execs  map[int64]*executionRun
+
+	caches *cache.Store
 }
 
 type executionRun struct {
@@ -83,6 +86,7 @@ func New(port int, store *db.Store) (*Server, error) {
 		sessions:  make(map[string]mcpSession),
 		approvals: make(map[int64]chan db.ToolCall),
 		execs:     make(map[int64]*executionRun),
+		caches:    cache.New(),
 	}
 	plugins, err := builtin.New()
 	if err != nil {
@@ -137,6 +141,8 @@ func New(port int, store *db.Store) (*Server, error) {
 	mux.HandleFunc("GET /api/resources/{id}", srv.requireSession(srv.handleGetResource))
 	mux.HandleFunc("PUT /api/resources/{id}", srv.requireSession(srv.handleUpdateResource))
 	mux.HandleFunc("DELETE /api/resources/{id}", srv.requireSession(srv.handleDeleteResource))
+	mux.HandleFunc("GET /api/resources/{id}/cache", srv.requireSession(srv.handleListCache))
+	mux.HandleFunc("DELETE /api/resources/{id}/cache/{name}", srv.requireSession(srv.handleClearCache))
 	mux.HandleFunc("/mcp", srv.handleMCP)
 	mux.Handle("/", spaHandler(content))
 	srv.http = &http.Server{
@@ -159,6 +165,7 @@ func (s *Server) Serve() error {
 	go s.watchHealth(ctx)
 	go s.watchSession(ctx)
 	go s.watchApprovals(ctx)
+	go s.watchCaches(ctx)
 
 	err := s.http.Serve(s.listener)
 	if errors.Is(err, http.ErrServerClosed) {
@@ -173,6 +180,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		// /api/events. Shutdown alone waits for those handlers to return.
 		s.stopBase()
 		s.shutdownErr = s.http.Shutdown(ctx)
+		if s.caches != nil {
+			s.caches.ClearAll()
+		}
 	})
 	return s.shutdownErr
 }

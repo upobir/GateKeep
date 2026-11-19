@@ -15,6 +15,7 @@ type Resource struct {
 	ConfigJSON         string
 	SecretsCiphertext  []byte
 	ExecutionTimeoutMs *int64
+	CacheIdleMs        *int64
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -29,9 +30,9 @@ func (s *Store) CreateResource(ctx context.Context, resource Resource) (Resource
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO resources(
-			name, type, config_json, secrets_ciphertext, execution_timeout_ms, created_at, updated_at
-		) VALUES(?, ?, ?, ?, ?, ?, ?)
-	`, resource.Name, resource.Type, resource.ConfigJSON, resource.SecretsCiphertext, resource.ExecutionTimeoutMs, formatTime(now), formatTime(now))
+			name, type, config_json, secrets_ciphertext, execution_timeout_ms, cache_idle_ms, created_at, updated_at
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+	`, resource.Name, resource.Type, resource.ConfigJSON, resource.SecretsCiphertext, resource.ExecutionTimeoutMs, resource.CacheIdleMs, formatTime(now), formatTime(now))
 	if err != nil {
 		return Resource{}, err
 	}
@@ -47,7 +48,7 @@ func (s *Store) CreateResource(ctx context.Context, resource Resource) (Resource
 
 func (s *Store) ListResources(ctx context.Context) ([]Resource, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, type, config_json, secrets_ciphertext, execution_timeout_ms, created_at, updated_at
+		SELECT id, name, type, config_json, secrets_ciphertext, execution_timeout_ms, cache_idle_ms, created_at, updated_at
 		FROM resources ORDER BY name
 	`)
 	if err != nil {
@@ -74,7 +75,7 @@ func (s *Store) ListResources(ctx context.Context) ([]Resource, error) {
 
 func (s *Store) ResourceByName(ctx context.Context, name string) (Resource, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, type, config_json, secrets_ciphertext, execution_timeout_ms, created_at, updated_at
+		SELECT id, name, type, config_json, secrets_ciphertext, execution_timeout_ms, cache_idle_ms, created_at, updated_at
 		FROM resources WHERE name = ?
 	`, name)
 	resource, err := scanResource(row)
@@ -86,7 +87,7 @@ func (s *Store) ResourceByName(ctx context.Context, name string) (Resource, erro
 
 func (s *Store) GetResource(ctx context.Context, id int64) (Resource, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, type, config_json, secrets_ciphertext, execution_timeout_ms, created_at, updated_at
+		SELECT id, name, type, config_json, secrets_ciphertext, execution_timeout_ms, cache_idle_ms, created_at, updated_at
 		FROM resources WHERE id = ?
 	`, id)
 	resource, err := scanResource(row)
@@ -111,9 +112,10 @@ func (s *Store) UpdateResource(ctx context.Context, resource Resource) error {
 			config_json = ?,
 			secrets_ciphertext = ?,
 			execution_timeout_ms = ?,
+			cache_idle_ms = ?,
 			updated_at = ?
 		WHERE id = ?
-	`, resource.Name, resource.Type, resource.ConfigJSON, resource.SecretsCiphertext, resource.ExecutionTimeoutMs, formatTime(resource.UpdatedAt), resource.ID)
+	`, resource.Name, resource.Type, resource.ConfigJSON, resource.SecretsCiphertext, resource.ExecutionTimeoutMs, resource.CacheIdleMs, formatTime(resource.UpdatedAt), resource.ID)
 	if err != nil {
 		return err
 	}
@@ -135,7 +137,7 @@ type rowScanner interface {
 func scanResource(row rowScanner) (Resource, error) {
 	var resource Resource
 	var secrets []byte
-	var timeout sql.NullInt64
+	var timeout, cacheIdle sql.NullInt64
 	var createdAt, updatedAt string
 	err := row.Scan(
 		&resource.ID,
@@ -144,6 +146,7 @@ func scanResource(row rowScanner) (Resource, error) {
 		&resource.ConfigJSON,
 		&secrets,
 		&timeout,
+		&cacheIdle,
 		&createdAt,
 		&updatedAt,
 	)
@@ -155,6 +158,9 @@ func scanResource(row rowScanner) (Resource, error) {
 	}
 	if timeout.Valid {
 		resource.ExecutionTimeoutMs = &timeout.Int64
+	}
+	if cacheIdle.Valid {
+		resource.CacheIdleMs = &cacheIdle.Int64
 	}
 	resource.CreatedAt, err = parseTime(createdAt)
 	if err != nil {

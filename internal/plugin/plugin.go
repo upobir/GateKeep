@@ -25,6 +25,19 @@ type Info struct {
 	CommandDescription string  `json:"-"`
 }
 
+// Cache is one resource's memory. It is empty after a restart and is cleared
+// when the process stops. Update runs fn while holding that resource's objects.
+// fn must not use the cache again. ok is false when the name is missing or has
+// been idle longer than this resource allows. store true saves next. store
+// false leaves a live object as it is. A live object counts as used, so its
+// idle timer starts over. A value that implements io.Closer is closed when a
+// different value replaces it, when it is dropped, or when it sits idle too long.
+// Names are non-empty and contain no spaces or slashes.
+type Cache interface {
+	Update(name string, fn func(current any, ok bool) (next any, store bool)) (any, bool)
+	Drop(name string)
+}
+
 // Plugin is one resource type. A new type is a package that implements this
 // and is added to the registry.
 type Plugin interface {
@@ -32,7 +45,8 @@ type Plugin interface {
 	Test(ctx context.Context, config, secrets map[string]string) error
 	// Execute runs one approved command. The result is returned to the harness.
 	// Stop when ctx is cancelled. An error means the command failed.
-	Execute(ctx context.Context, command string, config, secrets map[string]string) (any, error)
+	// cache is this resource's memory. A database connection belongs there.
+	Execute(ctx context.Context, command string, config, secrets map[string]string, cache Cache) (any, error)
 }
 
 // Registry is the list of resource types the application knows.

@@ -20,6 +20,7 @@ type resourceInput struct {
 	Config                  map[string]string `json:"config"`
 	Secrets                 map[string]string `json:"secrets"`
 	ExecutionTimeoutSeconds timeoutField      `json:"executionTimeoutSeconds"`
+	CacheIdleSeconds        timeoutField      `json:"cacheIdleSeconds"`
 }
 
 // timeoutField is set only when the JSON includes executionTimeoutSeconds.
@@ -51,6 +52,7 @@ type resourceView struct {
 	HasSecrets              bool              `json:"hasSecrets"`
 	Secrets                 map[string]string `json:"secrets,omitempty"`
 	ExecutionTimeoutSeconds *int              `json:"executionTimeoutSeconds"`
+	CacheIdleSeconds        *int              `json:"cacheIdleSeconds"`
 }
 
 func (s *Server) handleResourceTypes(w http.ResponseWriter, r *http.Request) {
@@ -94,12 +96,18 @@ func (s *Server) handleCreateResource(w http.ResponseWriter, r *http.Request) {
 		writeResourceError(w, err)
 		return
 	}
+	idle, err := cacheIdleMs(input.CacheIdleSeconds, nil)
+	if err != nil {
+		writeResourceError(w, err)
+		return
+	}
 	created, err := s.store.CreateResource(r.Context(), db.Resource{
 		Name:               strings.TrimSpace(input.Name),
 		Type:               input.Type,
 		ConfigJSON:         configJSON,
 		SecretsCiphertext:  secrets,
 		ExecutionTimeoutMs: timeout,
+		CacheIdleMs:        idle,
 	})
 	if err != nil {
 		writeResourceError(w, err)
@@ -141,10 +149,16 @@ func (s *Server) handleUpdateResource(w http.ResponseWriter, r *http.Request) {
 		writeResourceError(w, err)
 		return
 	}
+	idle, err := cacheIdleMs(input.CacheIdleSeconds, existing.CacheIdleMs)
+	if err != nil {
+		writeResourceError(w, err)
+		return
+	}
 	existing.Name = strings.TrimSpace(input.Name)
 	existing.ConfigJSON = configJSON
 	existing.SecretsCiphertext = secrets
 	existing.ExecutionTimeoutMs = timeout
+	existing.CacheIdleMs = idle
 	if err := s.store.UpdateResource(r.Context(), existing); err != nil {
 		writeResourceError(w, err)
 		return
@@ -193,6 +207,7 @@ func (s *Server) handleDeleteResource(w http.ResponseWriter, r *http.Request) {
 		writeResourceError(w, err)
 		return
 	}
+	s.caches.ClearResource(id)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -330,6 +345,7 @@ func (s *Server) resourceView(resource db.Resource, includeSecrets bool) (resour
 		Config:                  config,
 		HasSecrets:              len(resource.SecretsCiphertext) > 0,
 		ExecutionTimeoutSeconds: timeoutSeconds(resource.ExecutionTimeoutMs),
+		CacheIdleSeconds:        timeoutSeconds(resource.CacheIdleMs),
 	}
 	if includeSecrets && len(resource.SecretsCiphertext) > 0 {
 		plain, err := s.vault.Open(resource.SecretsCiphertext)
@@ -346,6 +362,14 @@ func (s *Server) resourceView(resource db.Resource, includeSecrets bool) (resour
 }
 
 func executionTimeoutMs(field timeoutField, existing *int64) (*int64, error) {
+	return optionalSecondsMs(field, existing, errExecutionRange)
+}
+
+func cacheIdleMs(field timeoutField, existing *int64) (*int64, error) {
+	return optionalSecondsMs(field, existing, errCacheIdleRange)
+}
+
+func optionalSecondsMs(field timeoutField, existing *int64, invalid error) (*int64, error) {
 	if !field.Set {
 		return existing, nil
 	}
@@ -354,7 +378,7 @@ func executionTimeoutMs(field timeoutField, existing *int64) (*int64, error) {
 	}
 	seconds := *field.Value
 	if seconds < 1 || seconds > int(maxApprovalTimeout/time.Second) {
-		return nil, errExecutionRange
+		return nil, invalid
 	}
 	ms := int64(seconds) * 1000
 	return &ms, nil

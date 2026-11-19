@@ -400,7 +400,7 @@ func (s *Server) runApproved(ctx context.Context, call db.ToolCall) (any, error)
 			return nil, err
 		}
 	}
-	return item.Execute(ctx, call.Command, config, secrets)
+	return item.Execute(ctx, call.Command, config, secrets, s.caches.Handle(resource.ID, cacheIdle(resource)))
 }
 
 func (s *Server) registerApproval(id int64) chan db.ToolCall {

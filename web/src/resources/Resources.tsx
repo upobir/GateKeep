@@ -10,6 +10,14 @@ type Resource = {
   hasSecrets: boolean
   secrets?: Record<string, string>
   executionTimeoutSeconds: number | null
+  cacheIdleSeconds: number | null
+}
+
+type CacheObject = {
+  name: string
+  createdAt: string
+  updatedAt: string
+  expiresAt: string
 }
 
 type Screen =
@@ -152,6 +160,10 @@ function ResourceView({
           <dt>Execution timeout</dt>
           <dd>{resource.executionTimeoutSeconds != null ? `${resource.executionTimeoutSeconds} seconds` : 'Global timeout'}</dd>
         </div>
+        <div className="detail-field">
+          <dt>Cache idle</dt>
+          <dd>{resource.cacheIdleSeconds != null ? `${resource.cacheIdleSeconds} seconds` : '5 minutes'}</dd>
+        </div>
       </dl>
       {error ? <p className="error">{error}</p> : null}
       <div className="form-actions">
@@ -165,6 +177,7 @@ function ResourceView({
           Back
         </button>
       </div>
+      <CacheList resourceID={resource.id} />
     </div>
   )
 }
@@ -187,6 +200,9 @@ function ResourceForm({
   const [timeoutSeconds, setTimeoutSeconds] = useState(
     resource?.executionTimeoutSeconds != null ? String(resource.executionTimeoutSeconds) : '',
   )
+  const [cacheIdle, setCacheIdle] = useState(
+    resource?.cacheIdleSeconds != null ? String(resource.cacheIdleSeconds) : '',
+  )
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const Form = selected.Form
@@ -199,6 +215,7 @@ function ResourceForm({
       config,
       secrets,
       executionTimeoutSeconds: timeoutSeconds.trim() === '' ? null : Number(timeoutSeconds),
+      cacheIdleSeconds: cacheIdle.trim() === '' ? null : Number(cacheIdle),
     }
   }
 
@@ -280,6 +297,18 @@ function ResourceForm({
         />
       </label>
       <p>Leave blank to use the global timeout.</p>
+      <label>
+        Cache idle (seconds)
+        <input
+          type="number"
+          min={1}
+          max={86400}
+          value={cacheIdle}
+          placeholder="300"
+          onChange={(event) => setCacheIdle(event.target.value)}
+        />
+      </label>
+      <p>Leave blank for 5 minutes. A cached object is removed after it sits unused this long.</p>
       {error ? <p className="error">{error}</p> : null}
       {message ? <p>{message}</p> : null}
       <div className="form-actions">
@@ -293,4 +322,98 @@ function ResourceForm({
       </div>
     </form>
   )
+}
+
+function CacheList({ resourceID }: { resourceID: number }) {
+  const [objects, setObjects] = useState<CacheObject[]>([])
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let stop = false
+    async function load() {
+      const response = await fetch(`/api/resources/${resourceID}/cache`)
+      if (stop) {
+        return
+      }
+      if (!response.ok) {
+        setError(await errorMessage(response))
+        return
+      }
+      const body = (await response.json()) as { objects: CacheObject[] }
+      setObjects(body.objects)
+      setError('')
+    }
+    load().catch(() => {
+      if (!stop) {
+        setError('Could not load the cache')
+      }
+    })
+    const timer = setInterval(() => {
+      load().catch(() => {
+        if (!stop) {
+          setError('Could not load the cache')
+        }
+      })
+    }, 1000)
+    return () => {
+      stop = true
+      clearInterval(timer)
+    }
+  }, [resourceID])
+
+  async function clear(name: string) {
+    setError('')
+    const response = await fetch(`/api/resources/${resourceID}/cache/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    })
+    if (!response.ok) {
+      setError(await errorMessage(response))
+      return
+    }
+    setObjects((current) => current.filter((object) => object.name !== name))
+  }
+
+  return (
+    <section className="cache">
+      <h3>Cache</h3>
+      {objects.length === 0 ? <p>Nothing is cached.</p> : null}
+      {objects.length > 0 ? (
+        <table className="cache-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Created</th>
+              <th>Updated</th>
+              <th>Expires</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {objects.map((object) => (
+              <tr key={object.name}>
+                <td>{object.name}</td>
+                <td>{when(object.createdAt)}</td>
+                <td>{when(object.updatedAt)}</td>
+                <td>{when(object.expiresAt)}</td>
+                <td>
+                  <button type="button" onClick={() => clear(object.name).catch(() => setError('Could not clear the cache'))}>
+                    Clear
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+      {error ? <p className="error">{error}</p> : null}
+    </section>
+  )
+}
+
+function when(value: string) {
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return value
+  }
+  return parsed.toLocaleString()
 }

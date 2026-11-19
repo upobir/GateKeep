@@ -150,13 +150,18 @@ p {
   padding: 1.5rem;
 }
 
-.gate section,
+.gate section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  width: min(28rem, 100%);
+}
+
 .settings,
 .settings form {
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
-  width: min(28rem, 100%);
 }
 
 .gate form {
@@ -200,6 +205,11 @@ button.primary,
   cursor: pointer;
 }
 
+.settings button[type='submit'],
+.resources > button.primary {
+  align-self: flex-start;
+}
+
 select {
   appearance: none;
   -webkit-appearance: none;
@@ -229,7 +239,6 @@ select option {
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
-  max-width: 28rem;
 }
 
 .resource-list {
@@ -283,6 +292,51 @@ select option {
 
 .secret-mask {
   letter-spacing: 0.15em;
+}
+
+.cache h3 {
+  margin: 0.2rem 0 0;
+  font-size: 1rem;
+}
+
+.cache p {
+  margin: 0.35rem 0 0;
+}
+
+.cache-table {
+  width: 100%;
+  margin-top: 0.5rem;
+  border-collapse: collapse;
+}
+
+.cache-table th {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-align: left;
+}
+
+.cache-table th,
+.cache-table td {
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.cache-table th:last-child,
+.cache-table td:last-child {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cache-table button {
+  padding: 0.35rem 0.7rem;
+  border: 0;
+  border-radius: 6px;
+  background: var(--current);
+  color: inherit;
+  cursor: pointer;
 }
 
 .form-actions {
