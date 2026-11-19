@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -341,6 +342,84 @@ func TestResourceCRUDAndConnection(t *testing.T) {
 	deleteResp.Body.Close()
 	if deleteResp.StatusCode != http.StatusOK {
 		t.Fatalf("delete = %d", deleteResp.StatusCode)
+	}
+}
+
+func TestShutdownClosesEventStream(t *testing.T) {
+	store, err := db.Open(filepath.Join(t.TempDir(), "gatekeep.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	srv, err := New(0, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- srv.Serve()
+	}()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+	setup, err := client.Post(srv.URL()+"/api/setup", "application/json", strings.NewReader(`{"password":"correct horse","confirm":"correct horse"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup.Body.Close()
+	if setup.StatusCode != http.StatusOK {
+		t.Fatalf("setup = %d", setup.StatusCode)
+	}
+
+	streamReq, err := http.NewRequest(http.MethodGet, srv.URL()+"/api/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := client.Do(streamReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	reader := bufio.NewReader(stream.Body)
+	if _, err := reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.Discard, stream.Body)
+		readDone <- err
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	started := time.Now()
+	if err := srv.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(started) > 500*time.Millisecond {
+		t.Fatalf("shutdown took %s", time.Since(started))
+	}
+
+	select {
+	case err := <-readDone:
+		if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("event stream stayed open after shutdown")
+	}
+	select {
+	case err := <-serveDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not stop")
 	}
 }
 

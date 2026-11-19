@@ -27,6 +27,8 @@ type Server struct {
 	plugins  *plugin.Registry
 	hub      *hub
 
+	baseCtx      context.Context
+	stopBase     context.CancelFunc
 	shutdownOnce sync.Once
 	shutdownErr  error
 }
@@ -52,11 +54,14 @@ func New(port int, store *db.Store) (*Server, error) {
 		return nil, fmt.Errorf("refusing to bind %s", listener.Addr())
 	}
 
+	baseCtx, stopBase := context.WithCancel(context.Background())
 	srv := &Server{
 		url:      "http://" + listener.Addr().String(),
 		listener: listener,
 		store:    store,
 		hub:      newHub(),
+		baseCtx:  baseCtx,
+		stopBase: stopBase,
 	}
 	plugins, err := builtin.New()
 	if err != nil {
@@ -84,7 +89,12 @@ func New(port int, store *db.Store) (*Server, error) {
 	mux.HandleFunc("PUT /api/resources/{id}", srv.requireSession(srv.handleUpdateResource))
 	mux.HandleFunc("DELETE /api/resources/{id}", srv.requireSession(srv.handleDeleteResource))
 	mux.Handle("/", spaHandler(content))
-	srv.http = &http.Server{Handler: mux}
+	srv.http = &http.Server{
+		Handler: mux,
+		BaseContext: func(net.Listener) context.Context {
+			return baseCtx
+		},
+	}
 
 	return srv, nil
 }
@@ -108,6 +118,9 @@ func (s *Server) Serve() error {
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.shutdownOnce.Do(func() {
+		// Cancelling the base context ends long-lived streams, such as
+		// /api/events. Shutdown alone waits for those handlers to return.
+		s.stopBase()
 		s.shutdownErr = s.http.Shutdown(ctx)
 	})
 	return s.shutdownErr
