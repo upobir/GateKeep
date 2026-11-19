@@ -1,9 +1,10 @@
-.PHONY: build frontend run install uninstall
+.PHONY: build frontend run install uninstall dmg
 
 APP = bin/GateKeep.app
 BIN = $(APP)/Contents/MacOS/gatekeep
 ICONSET = bin/AppIcon.iconset
 INSTALLED = $(HOME)/Applications/GateKeep.app
+DMG = bin/GateKeep.dmg
 
 build: frontend
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources $(ICONSET)
@@ -25,6 +26,17 @@ install: build
 uninstall:
 	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$(INSTALLED)"
 	rm -rf "$(INSTALLED)"
+
+dmg: build
+	rm -rf bin/dmg-stage bin/GateKeep-rw.dmg "$(DMG)"
+	mkdir -p bin/dmg-stage
+	ditto $(APP) bin/dmg-stage/GateKeep.app
+	ln -s /Applications bin/dmg-stage/Applications
+	hdiutil create -volname GateKeep -srcfolder bin/dmg-stage -ov -format UDRW bin/GateKeep-rw.dmg
+	rm -rf bin/dmg-stage
+	bash scripts/layout-dmg.sh bin/GateKeep-rw.dmg
+	hdiutil convert bin/GateKeep-rw.dmg -format UDZO -imagekey zlib-level=9 -o "$(DMG)"
+	rm -f bin/GateKeep-rw.dmg
 
 frontend:
 	@set -e; \
