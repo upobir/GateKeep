@@ -10,6 +10,7 @@ type Approval = {
   status: string
   decisionReason?: string
   executionStatus?: string
+  executionTimeoutSeconds?: number
   result?: string
   createdAt: string
   decidedAt?: string
@@ -80,7 +81,7 @@ export function Queue({ focusID, tick }: { focusID: number | null; tick: number 
   }
 
   const pending = items ?? []
-  const settled = focused && focused.status !== 'pending' ? focused : null
+  const settled = focused && focused.status !== 'pending' && focused.status !== 'executing' ? focused : null
 
   return (
     <div className="approvals">
@@ -136,16 +137,20 @@ function ApprovalCard({
 }) {
   const [reason, setReason] = useState('')
   const [pending, setPending] = useState(false)
+  const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
   const waiting = call.status === 'pending'
+  const executing = call.status === 'executing' || running
 
   async function approve() {
-    setPending(true)
+    setRunning(true)
+    setReason('')
     setError('')
     const response = await fetch(`/api/approvals/${call.id}/approve`, { method: 'POST' })
-    setPending(false)
+    setRunning(false)
     if (!response.ok) {
       setError(await errorMessage(response))
+      onDecided()
       return
     }
     onDecided()
@@ -169,6 +174,25 @@ function ApprovalCard({
     onDecided()
   }
 
+  async function cancel(event: FormEvent) {
+    event.preventDefault()
+    setPending(true)
+    setError('')
+    const response = await fetch(`/api/approvals/${call.id}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    })
+    setPending(false)
+    if (!response.ok) {
+      setError(await errorMessage(response))
+      return
+    }
+    setReason('')
+    setRunning(false)
+    onDecided()
+  }
+
   return (
     <article id={`approval-${call.id}`} className={current ? 'approval-card current' : 'approval-card'}>
       <header className="approval-heading">
@@ -176,14 +200,33 @@ function ApprovalCard({
           <h2>{call.resourceName}</h2>
           <p className="muted">{call.harnessName}</p>
         </div>
-        <p className="time-left">{waiting ? timeLeft(call.createdAt, timeoutSeconds, now) : statusLine(call)}</p>
+        <p className="time-left">{executing ? executionLeft(call, now) : waiting ? timeLeft(call.createdAt, timeoutSeconds, now) : statusLine(call)}</p>
       </header>
-      <div className="why">
-        <span>Why this command was sent</span>
-        <strong>{call.reason}</strong>
+      <div className={executing ? 'call-body running' : 'call-body'}>
+        <div className="why">
+          <span>Why this command was sent</span>
+          <strong>{call.reason}</strong>
+        </div>
+        <p className="command">{call.command}</p>
+        {executing ? <span className="spinner" role="status" aria-label="Running" /> : null}
       </div>
-      <p className="command">{call.command}</p>
-      {waiting ? (
+      {executing ? (
+        <form className="reject-row" onSubmit={cancel}>
+          <label>
+            Cancel reason
+            <textarea
+              rows={3}
+              placeholder="Optional"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+            />
+          </label>
+          <button type="submit" className="danger" disabled={pending}>
+            Cancel
+          </button>
+        </form>
+      ) : null}
+      {waiting && !running ? (
         <>
           <div className="decision-row">
             <button type="button" className="approve" disabled={pending} onClick={approve}>
@@ -212,6 +255,13 @@ function ApprovalCard({
   )
 }
 
+function executionLeft(call: Approval, now: number) {
+  if (!call.executionTimeoutSeconds || !call.decidedAt) {
+    return 'Running'
+  }
+  return timeLeft(call.decidedAt, call.executionTimeoutSeconds, now)
+}
+
 function timeLeft(createdAt: string, timeoutSeconds: number, now: number) {
   const start = new Date(createdAt).getTime()
   if (Number.isNaN(start)) {
@@ -231,6 +281,12 @@ function statusLine(call: Approval) {
   }
   if (call.status === 'approved' && call.executionStatus === 'ok') {
     return `Approved ${whenDecided}. Result ${call.result ?? ''}`.trim()
+  }
+  if (call.status === 'cancelled') {
+    return `Cancelled ${whenDecided}. ${call.decisionReason ?? ''}`.trim()
+  }
+  if (call.status === 'approved' && call.executionStatus === 'timeout') {
+    return `Approved ${whenDecided}. Execution timed out.`.trim()
   }
   if (call.status === 'approved' && call.executionStatus === 'error') {
     return `Approved ${whenDecided}. ${call.result ?? 'The command failed.'}`.trim()

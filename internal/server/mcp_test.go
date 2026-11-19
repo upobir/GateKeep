@@ -50,7 +50,7 @@ func TestMCPLegacyMockTool(t *testing.T) {
 		t.Fatalf("protocol = %v", result["protocolVersion"])
 	}
 	instructions, _ := result["instructions"].(string)
-	if !strings.Contains(instructions, "approve") || !strings.Contains(instructions, srv.URL()) || !strings.Contains(instructions, "user can read it") {
+	if !strings.Contains(instructions, "approve") || !strings.Contains(instructions, srv.URL()) || !strings.Contains(instructions, "user can read it") || !strings.Contains(instructions, "runs longer") {
 		t.Fatalf("instructions = %q", instructions)
 	}
 
@@ -529,7 +529,7 @@ func findMockTool(t *testing.T, body map[string]any) map[string]any {
 		schema := tool["inputSchema"].(map[string]any)
 		properties := schema["properties"].(map[string]any)
 		command := properties["command"].(map[string]any)
-		if command["description"] != "One Mock command, such as PING. Put it on a single line." {
+		if command["description"] != "One Mock command: ping, loop, or break." {
 			t.Fatalf("command description = %v", command["description"])
 		}
 		resource := properties["resource"].(map[string]any)

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"gatekeep/internal/db"
 	"gatekeep/internal/plugin"
@@ -37,6 +38,16 @@ type Server struct {
 
 	approvalsMu sync.Mutex
 	approvals   map[int64]chan db.ToolCall
+
+	execMu sync.Mutex
+	execs  map[int64]*executionRun
+}
+
+type executionRun struct {
+	cancel context.CancelFunc
+	byUser atomic.Bool
+	reason string
+	done   chan struct{}
 }
 
 func New(port int, store *db.Store) (*Server, error) {
@@ -70,6 +81,7 @@ func New(port int, store *db.Store) (*Server, error) {
 		stopBase:  stopBase,
 		sessions:  make(map[string]mcpSession),
 		approvals: make(map[int64]chan db.ToolCall),
+		execs:     make(map[int64]*executionRun),
 	}
 	plugins, err := builtin.New()
 	if err != nil {
@@ -83,6 +95,10 @@ func New(port int, store *db.Store) (*Server, error) {
 			listener.Close()
 			return nil, err
 		}
+		if err := store.ExpireExecutingToolCalls(context.Background(), restartExecutionReason); err != nil {
+			listener.Close()
+			return nil, err
+		}
 	}
 
 	mux := http.NewServeMux()
@@ -93,10 +109,13 @@ func New(port int, store *db.Store) (*Server, error) {
 	mux.HandleFunc("PUT /api/settings/unlock-duration", srv.requireSession(srv.handleUnlockDuration))
 	mux.HandleFunc("GET /api/settings/approval-timeout", srv.requireSession(srv.handleGetApprovalTimeout))
 	mux.HandleFunc("PUT /api/settings/approval-timeout", srv.requireSession(srv.handlePutApprovalTimeout))
+	mux.HandleFunc("GET /api/settings/execution-timeout", srv.requireSession(srv.handleGetExecutionTimeout))
+	mux.HandleFunc("PUT /api/settings/execution-timeout", srv.requireSession(srv.handlePutExecutionTimeout))
 	mux.HandleFunc("GET /api/approvals", srv.requireSession(srv.handleListApprovals))
 	mux.HandleFunc("GET /api/approvals/{id}", srv.requireSession(srv.handleGetApproval))
 	mux.HandleFunc("POST /api/approvals/{id}/approve", srv.requireSession(srv.handleApprove))
 	mux.HandleFunc("POST /api/approvals/{id}/reject", srv.requireSession(srv.handleReject))
+	mux.HandleFunc("POST /api/approvals/{id}/cancel", srv.requireSession(srv.handleCancel))
 	mux.HandleFunc("GET /api/health", srv.requireSession(srv.handleHealth))
 	mux.HandleFunc("GET /api/events", srv.requireSession(srv.handleEvents))
 	mux.HandleFunc("GET /api/resource-types", srv.requireSession(srv.handleResourceTypes))

@@ -9,6 +9,7 @@ type Resource = {
   config: Record<string, string>
   hasSecrets: boolean
   secrets?: Record<string, string>
+  executionTimeoutSeconds: number | null
 }
 
 type Screen =
@@ -147,6 +148,10 @@ function ResourceView({
           <dd>{plugin.label}</dd>
         </div>
         <Details config={resource.config} hasSecrets={resource.hasSecrets} />
+        <div className="detail-field">
+          <dt>Execution timeout</dt>
+          <dd>{resource.executionTimeoutSeconds != null ? `${resource.executionTimeoutSeconds} seconds` : 'Global timeout'}</dd>
+        </div>
       </dl>
       {error ? <p className="error">{error}</p> : null}
       <div className="form-actions">
@@ -179,6 +184,9 @@ function ResourceForm({
   const [name, setName] = useState(resource?.name ?? '')
   const [config, setConfig] = useState<Record<string, string>>(resource?.config ?? {})
   const [secrets, setSecrets] = useState<Record<string, string>>(resource?.secrets ?? {})
+  const [timeoutSeconds, setTimeoutSeconds] = useState(
+    resource?.executionTimeoutSeconds != null ? String(resource.executionTimeoutSeconds) : '',
+  )
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const Form = selected.Form
@@ -190,6 +198,7 @@ function ResourceForm({
       type: selected.type,
       config,
       secrets,
+      executionTimeoutSeconds: timeoutSeconds.trim() === '' ? null : Number(timeoutSeconds),
     }
   }
 
@@ -259,6 +268,18 @@ function ResourceForm({
         onConfig={(field, value) => setConfig((current) => ({ ...current, [field]: value }))}
         onSecret={(field, value) => setSecrets((current) => ({ ...current, [field]: value }))}
       />
+      <label>
+        Execution timeout (seconds)
+        <input
+          type="number"
+          min={1}
+          max={86400}
+          value={timeoutSeconds}
+          placeholder="Global timeout"
+          onChange={(event) => setTimeoutSeconds(event.target.value)}
+        />
+      </label>
+      <p>Leave blank to use the global timeout.</p>
       {error ? <p className="error">{error}</p> : null}
       {message ? <p>{message}</p> : null}
       <div className="form-actions">

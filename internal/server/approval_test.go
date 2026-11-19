@@ -41,9 +41,9 @@ func TestApprovalQueueOrdersAndAnswers(t *testing.T) {
 	firstDone := make(chan callOutcome, 1)
 	secondDone := make(chan callOutcome, 1)
 	go func() {
-		firstDone <- callMock(srv, session, "SELECT 1", "first look")
+		firstDone <- callMock(srv, session, "ping", "first look")
 	}()
-	waitPendingCommand(t, store, "SELECT 1")
+	waitPendingCommand(t, store, "ping")
 	go func() {
 		secondDone <- callMock(srv, session, "SELECT 2", "second look")
 	}()
@@ -62,7 +62,7 @@ func TestApprovalQueueOrdersAndAnswers(t *testing.T) {
 	if listResp.StatusCode != http.StatusOK || len(listed) != 2 {
 		t.Fatalf("list status = %d body = %+v", listResp.StatusCode, listed)
 	}
-	if listed[0].Command != "SELECT 1" || listed[1].Command != "SELECT 2" {
+	if listed[0].Command != "ping" || listed[1].Command != "SELECT 2" {
 		t.Fatalf("order = %+v", listed)
 	}
 	if listed[0].ResourceName != "local" || listed[0].HarnessName != "Claude Desktop" || listed[0].Reason != "first look" {
@@ -202,8 +202,309 @@ func TestApprovedMockRejectsAWrongToken(t *testing.T) {
 		t.Fatal(outcome.err)
 	}
 	got := decodeOutcome(t, outcome.text)
-	if !outcome.isError || got.OK || got.Kind != "tool_call_error" || got.Error != "mock token was rejected" {
+	if !outcome.isError || got.OK || got.Kind != "tool_call_error" || got.Error != "wrong token" {
 		t.Fatalf("result = %+v %s", got, outcome.text)
+	}
+}
+
+func TestExecutionTimeoutAnswersTheHarness(t *testing.T) {
+	store := openMCPStore(t)
+	if _, err := store.CreateResource(context.Background(), db.Resource{
+		Name: "local", Type: "mock", ConfigJSON: `{}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutSetting(context.Background(), executionTimeoutKey, "1"); err != nil {
+		t.Fatal(err)
+	}
+	srv := startMCPServer(t, store)
+	client := unlockedClient(t, srv)
+	sealMockToken(t, srv, store, "local", "ok")
+	session := mcpSessionID(t, srv)
+
+	done := make(chan callOutcome, 1)
+	go func() {
+		done <- callMock(srv, session, "loop", "wait for the limit")
+	}()
+	waitPendingCommand(t, store, "loop")
+	pending, err := store.ListPendingToolCalls(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	approve, err := client.Post(srv.URL()+"/api/approvals/"+strconv.FormatInt(pending[0].ID, 10)+"/approve", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	approve.Body.Close()
+	if approve.StatusCode != http.StatusOK {
+		t.Fatalf("approve = %d", approve.StatusCode)
+	}
+	outcome := <-done
+	if outcome.err != nil {
+		t.Fatal(outcome.err)
+	}
+	got := decodeOutcome(t, outcome.text)
+	if !outcome.isError || got.OK || got.Kind != "tool_call_timed_out" || got.Error != "Execution timed out." {
+		t.Fatalf("result = %+v %s", got, outcome.text)
+	}
+	stored, err := store.GetToolCall(context.Background(), pending[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != db.ToolCallApproved || stored.ExecutionStatus == nil || *stored.ExecutionStatus != db.ExecutionTimeout || stored.FinishedAt == nil {
+		t.Fatalf("stored = %+v", stored)
+	}
+}
+
+func TestResourceTimeoutOverridesTheGlobalLimit(t *testing.T) {
+	ms := int64(1000)
+	store := openMCPStore(t)
+	if _, err := store.CreateResource(context.Background(), db.Resource{
+		Name: "local", Type: "mock", ConfigJSON: `{}`, ExecutionTimeoutMs: &ms,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutSetting(context.Background(), executionTimeoutKey, "30"); err != nil {
+		t.Fatal(err)
+	}
+	srv := startMCPServer(t, store)
+	client := unlockedClient(t, srv)
+	sealMockToken(t, srv, store, "local", "ok")
+	session := mcpSessionID(t, srv)
+
+	done := make(chan callOutcome, 1)
+	go func() {
+		done <- callMock(srv, session, "loop", "use the resource limit")
+	}()
+	waitPendingCommand(t, store, "loop")
+	pending, err := store.ListPendingToolCalls(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	approve, err := client.Post(srv.URL()+"/api/approvals/"+strconv.FormatInt(pending[0].ID, 10)+"/approve", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	approve.Body.Close()
+	if approve.StatusCode != http.StatusOK {
+		t.Fatalf("approve = %d", approve.StatusCode)
+	}
+	if time.Since(started) > 4*time.Second {
+		t.Fatal("resource timeout did not stop the command")
+	}
+	outcome := <-done
+	if outcome.err != nil {
+		t.Fatal(outcome.err)
+	}
+	got := decodeOutcome(t, outcome.text)
+	if got.Kind != "tool_call_timed_out" || got.Error != "Execution timed out." {
+		t.Fatalf("result = %+v %s", got, outcome.text)
+	}
+}
+
+func TestBreakReturnsAnExecutionError(t *testing.T) {
+	store := openMCPStore(t)
+	if _, err := store.CreateResource(context.Background(), db.Resource{
+		Name: "local", Type: "mock", ConfigJSON: `{}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := startMCPServer(t, store)
+	client := unlockedClient(t, srv)
+	sealMockToken(t, srv, store, "local", "ok")
+	session := mcpSessionID(t, srv)
+
+	done := make(chan callOutcome, 1)
+	go func() {
+		done <- callMock(srv, session, "break", "see the failure")
+	}()
+	waitPendingCommand(t, store, "break")
+	pending, err := store.ListPendingToolCalls(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	approve, err := client.Post(srv.URL()+"/api/approvals/"+strconv.FormatInt(pending[0].ID, 10)+"/approve", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	approve.Body.Close()
+	outcome := <-done
+	if outcome.err != nil {
+		t.Fatal(outcome.err)
+	}
+	got := decodeOutcome(t, outcome.text)
+	if !outcome.isError || got.Error != "something went wrong" {
+		t.Fatalf("result = %+v %s", got, outcome.text)
+	}
+	stored, err := store.GetToolCall(context.Background(), pending[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ExecutionStatus == nil || *stored.ExecutionStatus != db.ExecutionError {
+		t.Fatalf("stored = %+v", stored)
+	}
+}
+
+func TestCancelReturnsToTheQueue(t *testing.T) {
+	store := openMCPStore(t)
+	if _, err := store.CreateResource(context.Background(), db.Resource{
+		Name: "local", Type: "mock", ConfigJSON: `{}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := startMCPServer(t, store)
+	client := unlockedClient(t, srv)
+	sealMockToken(t, srv, store, "local", "ok")
+	session := mcpSessionID(t, srv)
+
+	done := make(chan callOutcome, 1)
+	go func() {
+		done <- callMock(srv, session, "loop", "hold until cancelled")
+	}()
+	waitPendingCommand(t, store, "loop")
+	pending, err := store.ListPendingToolCalls(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := strconv.FormatInt(pending[0].ID, 10)
+
+	early, err := client.Post(srv.URL()+"/api/approvals/"+id+"/cancel", "application/json", strings.NewReader(`{"reason":"too soon"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	early.Body.Close()
+	if early.StatusCode != http.StatusConflict {
+		t.Fatalf("cancel before running = %d", early.StatusCode)
+	}
+
+	approved := make(chan int, 1)
+	go func() {
+		resp, err := client.Post(srv.URL()+"/api/approvals/"+id+"/approve", "application/json", strings.NewReader(`{}`))
+		if err != nil {
+			approved <- 0
+			return
+		}
+		resp.Body.Close()
+		approved <- resp.StatusCode
+	}()
+	waitToolStatus(t, store, pending[0].ID, db.ToolCallExecuting)
+
+	cancel, err := client.Post(srv.URL()+"/api/approvals/"+id+"/cancel", "application/json", strings.NewReader(`{"reason":"stop this run"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stopped approvalView
+	if err := json.NewDecoder(cancel.Body).Decode(&stopped); err != nil {
+		cancel.Body.Close()
+		t.Fatal(err)
+	}
+	cancel.Body.Close()
+	if cancel.StatusCode != http.StatusOK || stopped.Status != db.ToolCallCancelled || stopped.DecisionReason != "stop this run" {
+		t.Fatalf("cancel = %d %+v", cancel.StatusCode, stopped)
+	}
+	if status := <-approved; status != http.StatusOK {
+		t.Fatalf("approve = %d", status)
+	}
+	outcome := <-done
+	if outcome.err != nil {
+		t.Fatal(outcome.err)
+	}
+	got := decodeOutcome(t, outcome.text)
+	if !outcome.isError || got.Kind != "user_cancelled_mid_tool_call" || got.Reason != "stop this run" {
+		t.Fatalf("result = %+v %s", got, outcome.text)
+	}
+	left, err := store.ListQueueToolCalls(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 0 {
+		t.Fatalf("queue = %+v", left)
+	}
+}
+
+func TestExecutionTimeoutSettingAndResourceOverride(t *testing.T) {
+	store := openMCPStore(t)
+	srv := startMCPServer(t, store)
+	client := unlockedClient(t, srv)
+
+	got, err := client.Get(srv.URL() + "/api/settings/execution-timeout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var setting struct {
+		Seconds int `json:"seconds"`
+	}
+	if err := json.NewDecoder(got.Body).Decode(&setting); err != nil {
+		got.Body.Close()
+		t.Fatal(err)
+	}
+	got.Body.Close()
+	if got.StatusCode != http.StatusOK || setting.Seconds != 30 {
+		t.Fatalf("default timeout = %d %+v", got.StatusCode, setting)
+	}
+
+	created, err := client.Post(srv.URL()+"/api/resources", "application/json", strings.NewReader(`{"name":"local","type":"mock","config":{"host":"db.example"},"secrets":{"token":"ok"},"executionTimeoutSeconds":4}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view resourceView
+	if err := json.NewDecoder(created.Body).Decode(&view); err != nil {
+		created.Body.Close()
+		t.Fatal(err)
+	}
+	created.Body.Close()
+	if created.StatusCode != http.StatusCreated || view.ExecutionTimeoutSeconds == nil || *view.ExecutionTimeoutSeconds != 4 {
+		t.Fatalf("create = %d %+v", created.StatusCode, view)
+	}
+	stored, err := store.GetResource(context.Background(), view.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ExecutionTimeoutMs == nil || *stored.ExecutionTimeoutMs != 4000 {
+		t.Fatalf("stored timeout = %v", stored.ExecutionTimeoutMs)
+	}
+
+	kept, err := http.NewRequest(http.MethodPut, srv.URL()+"/api/resources/"+strconv.FormatInt(view.ID, 10), strings.NewReader(`{"name":"local","type":"mock","config":{"host":"db.example"},"secrets":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept.Header.Set("Content-Type", "application/json")
+	keptResp, err := client.Do(kept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keptResp.Body.Close()
+	if keptResp.StatusCode != http.StatusOK {
+		t.Fatalf("update = %d", keptResp.StatusCode)
+	}
+	stored, err = store.GetResource(context.Background(), view.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ExecutionTimeoutMs == nil || *stored.ExecutionTimeoutMs != 4000 {
+		t.Fatalf("timeout was cleared = %v", stored.ExecutionTimeoutMs)
+	}
+
+	cleared, err := http.NewRequest(http.MethodPut, srv.URL()+"/api/resources/"+strconv.FormatInt(view.ID, 10), strings.NewReader(`{"name":"local","type":"mock","config":{"host":"db.example"},"secrets":{},"executionTimeoutSeconds":null}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleared.Header.Set("Content-Type", "application/json")
+	clearedResp, err := client.Do(cleared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clearedResp.Body.Close()
+	if clearedResp.StatusCode != http.StatusOK {
+		t.Fatalf("clear = %d", clearedResp.StatusCode)
+	}
+	stored, err = store.GetResource(context.Background(), view.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ExecutionTimeoutMs != nil {
+		t.Fatalf("timeout = %v", stored.ExecutionTimeoutMs)
 	}
 }
 
@@ -367,8 +668,44 @@ func sealMockToken(t *testing.T, srv *Server, store *db.Store, name, token strin
 	}
 }
 
+func mcpSessionID(t *testing.T, srv *Server) string {
+	t.Helper()
+	initResp := mcpPost(t, srv, "", "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2025-11-25",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "test", "version": "0"},
+		},
+	})
+	session := initResp.Header.Get("Mcp-Session-Id")
+	initResp.Body.Close()
+	if session == "" {
+		t.Fatal("missing session id")
+	}
+	return session
+}
+
+func waitToolStatus(t *testing.T, store *db.Store, id int64, status string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		call, err := store.GetToolCall(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if call.Status == status {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("call %d did not become %s", id, status)
+}
+
 func callMock(srv *Server, session, command, reason string) callOutcome {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	payload := map[string]any{
 		"jsonrpc": "2.0",

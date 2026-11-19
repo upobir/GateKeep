@@ -20,27 +20,29 @@ const (
 	minApprovalTimeout     = time.Second
 	maxApprovalTimeout     = 24 * time.Hour
 
-	restartExpiryReason = "GateKeep restarted before the user decided."
-	stoppedExpiryReason = "GateKeep stopped before the user decided."
-	disconnectReason    = "The harness disconnected before the user decided."
-	timeoutReason       = "Approval timed out. The user did not approve this command."
+	restartExpiryReason    = "GateKeep restarted before the user decided."
+	restartExecutionReason = "GateKeep restarted during execution."
+	stoppedExpiryReason    = "GateKeep stopped before the user decided."
+	disconnectReason       = "The harness disconnected before the user decided."
+	timeoutReason          = "Approval timed out. The user did not approve this command."
 )
 
 var errReasonRequired = errors.New("a rejection reason is required")
 
 type approvalView struct {
-	ID              int64  `json:"id"`
-	ResourceName    string `json:"resourceName"`
-	HarnessName     string `json:"harnessName"`
-	Command         string `json:"command"`
-	Reason          string `json:"reason"`
-	Status          string `json:"status"`
-	Decision        string `json:"decision,omitempty"`
-	DecisionReason  string `json:"decisionReason,omitempty"`
-	ExecutionStatus string `json:"executionStatus,omitempty"`
-	Result          string `json:"result,omitempty"`
-	CreatedAt       string `json:"createdAt"`
-	DecidedAt       string `json:"decidedAt,omitempty"`
+	ID                      int64  `json:"id"`
+	ResourceName            string `json:"resourceName"`
+	HarnessName             string `json:"harnessName"`
+	Command                 string `json:"command"`
+	Reason                  string `json:"reason"`
+	Status                  string `json:"status"`
+	Decision                string `json:"decision,omitempty"`
+	DecisionReason          string `json:"decisionReason,omitempty"`
+	ExecutionStatus         string `json:"executionStatus,omitempty"`
+	ExecutionTimeoutSeconds int    `json:"executionTimeoutSeconds,omitempty"`
+	Result                  string `json:"result,omitempty"`
+	CreatedAt               string `json:"createdAt"`
+	DecidedAt               string `json:"decidedAt,omitempty"`
 }
 
 func approvalJSON(call db.ToolCall) approvalView {
@@ -69,6 +71,24 @@ func approvalJSON(call db.ToolCall) approvalView {
 		view.Result = *call.Result
 	}
 	return view
+}
+
+func (s *Server) presentApproval(ctx context.Context, call db.ToolCall) approvalView {
+	view := approvalJSON(call)
+	if call.Status == db.ToolCallExecuting {
+		view.ExecutionTimeoutSeconds = int(s.callExecutionLimit(ctx, call) / time.Second)
+	}
+	return view
+}
+
+func (s *Server) callExecutionLimit(ctx context.Context, call db.ToolCall) time.Duration {
+	if call.ResourceID != nil && s.store != nil {
+		resource, err := s.store.GetResource(ctx, *call.ResourceID)
+		if err == nil {
+			return s.executionLimit(ctx, resource)
+		}
+	}
+	return s.globalExecutionTimeout(ctx)
 }
 
 func (s *Server) approvalTimeout(ctx context.Context) time.Duration {
@@ -135,14 +155,14 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "database is unavailable"})
 		return
 	}
-	calls, err := s.store.ListPendingToolCalls(r.Context())
+	calls, err := s.store.ListQueueToolCalls(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not list approvals"})
 		return
 	}
 	views := make([]approvalView, 0, len(calls))
 	for _, call := range calls {
-		views = append(views, approvalJSON(call))
+		views = append(views, s.presentApproval(r.Context(), call))
 	}
 	writeJSON(w, http.StatusOK, views)
 }
@@ -166,11 +186,11 @@ func (s *Server) handleGetApproval(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load the approval"})
 		return
 	}
-	writeJSON(w, http.StatusOK, approvalJSON(call))
+	writeJSON(w, http.StatusOK, s.presentApproval(r.Context(), call))
 }
 
 func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
-	s.writeDecision(w, r, db.ToolCallApproved, db.DecisionApprove, "")
+	s.writeDecision(w, r, db.ToolCallExecuting, db.DecisionApprove, "")
 }
 
 func (s *Server) handleReject(w http.ResponseWriter, r *http.Request) {
@@ -194,7 +214,7 @@ func (s *Server) writeDecision(w http.ResponseWriter, r *http.Request, status, d
 		writeApprovalError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, approvalJSON(call))
+	writeJSON(w, http.StatusOK, s.presentApproval(r.Context(), call))
 }
 
 func writeApprovalError(w http.ResponseWriter, err error) {
@@ -205,6 +225,8 @@ func writeApprovalError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	case errors.Is(err, db.ErrNotPending):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "this request is no longer pending"})
+	case errors.Is(err, errNotRunning):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update the approval"})
 	}
@@ -217,42 +239,23 @@ func (s *Server) decideApproval(ctx context.Context, id int64, status, decision,
 	if decision == db.DecisionReject && strings.TrimSpace(reason) == "" {
 		return db.ToolCall{}, errReasonRequired
 	}
-	finish := status != db.ToolCallApproved
-	call, err := s.store.ResolveToolCall(ctx, id, status, decision, reason, finish)
+	run := decision == db.DecisionApprove
+	storedStatus := status
+	if run {
+		storedStatus = db.ToolCallExecuting
+	}
+	call, err := s.store.ResolveToolCall(ctx, id, storedStatus, decision, reason, !run)
 	if err != nil {
 		return db.ToolCall{}, err
 	}
-	if status == db.ToolCallApproved {
-		call = s.executeApproved(ctx, call)
+	if run {
+		call, err = s.executeApproved(ctx, call)
+		if err != nil {
+			return db.ToolCall{}, err
+		}
 	}
 	s.deliverApproval(call)
 	return call, nil
-}
-
-func (s *Server) executeApproved(ctx context.Context, call db.ToolCall) db.ToolCall {
-	value, execErr := s.runApproved(ctx, call)
-	now := time.Now().UTC()
-	call.FinishedAt = &now
-	status := db.ExecutionOK
-	var result string
-	if execErr != nil {
-		status = db.ExecutionError
-		result = execErr.Error()
-	} else {
-		raw, err := json.Marshal(value)
-		if err != nil {
-			status = db.ExecutionError
-			result = err.Error()
-		} else {
-			result = string(raw)
-		}
-	}
-	call.ExecutionStatus = &status
-	call.Result = &result
-	if err := s.store.UpdateToolCall(ctx, call); err != nil {
-		return call
-	}
-	return call
 }
 
 func (s *Server) runApproved(ctx context.Context, call db.ToolCall) (any, error) {
@@ -356,6 +359,9 @@ func (s *Server) writeToolDecision(w http.ResponseWriter, rpcID json.RawMessage,
 func decisionOutcome(call db.ToolCall) mcp.Outcome {
 	switch call.Status {
 	case db.ToolCallApproved:
+		if call.ExecutionStatus != nil && *call.ExecutionStatus == db.ExecutionTimeout {
+			return mcp.Failed("tool_call_timed_out", "Execution timed out.")
+		}
 		if call.ExecutionStatus != nil && *call.ExecutionStatus == db.ExecutionOK && call.Result != nil {
 			var value any
 			if err := json.Unmarshal([]byte(*call.Result), &value); err == nil {
@@ -367,6 +373,12 @@ func decisionOutcome(call db.ToolCall) mcp.Outcome {
 			message = *call.Result
 		}
 		return mcp.Failed("tool_call_error", message)
+	case db.ToolCallCancelled:
+		reason := ""
+		if call.DecisionReason != nil {
+			reason = *call.DecisionReason
+		}
+		return mcp.Outcome{OK: false, Kind: "user_cancelled_mid_tool_call", Reason: reason}
 	case db.ToolCallRejected:
 		reason := ""
 		if call.DecisionReason != nil {

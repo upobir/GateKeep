@@ -163,7 +163,7 @@ func (s *Server) handleModernMCP(w http.ResponseWriter, r *http.Request, req rpc
 			"resultType":        "complete",
 			"supportedVersions": []string{mcp.ModernVersion},
 			"capabilities":      map[string]any{"tools": map[string]any{"listChanged": false}},
-			"instructions":      mcp.Instructions(s.url, s.approvalTimeout(r.Context())),
+			"instructions":      mcp.Instructions(s.url, s.approvalTimeout(r.Context()), s.globalExecutionTimeout(r.Context())),
 			"_meta": map[string]any{
 				"io.modelcontextprotocol/serverInfo": map[string]any{
 					"name":    mcp.ServerName,
@@ -251,7 +251,7 @@ func (s *Server) mcpInitialize(w http.ResponseWriter, req rpcRequest) {
 			"name":    mcp.ServerName,
 			"version": mcp.ServerVersion,
 		},
-		"instructions": mcp.Instructions(s.url, s.approvalTimeout(context.Background())),
+		"instructions": mcp.Instructions(s.url, s.approvalTimeout(context.Background()), s.globalExecutionTimeout(context.Background())),
 	})
 }
 

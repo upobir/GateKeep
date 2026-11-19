@@ -7,26 +7,50 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"gatekeep/internal/db"
 	"gatekeep/internal/vault"
 )
 
 type resourceInput struct {
-	ID      int64             `json:"id"`
-	Name    string            `json:"name"`
-	Type    string            `json:"type"`
-	Config  map[string]string `json:"config"`
-	Secrets map[string]string `json:"secrets"`
+	ID                      int64             `json:"id"`
+	Name                    string            `json:"name"`
+	Type                    string            `json:"type"`
+	Config                  map[string]string `json:"config"`
+	Secrets                 map[string]string `json:"secrets"`
+	ExecutionTimeoutSeconds timeoutField      `json:"executionTimeoutSeconds"`
+}
+
+// timeoutField is set only when the JSON includes executionTimeoutSeconds.
+// Null clears a per-resource limit and the command uses the global timeout.
+type timeoutField struct {
+	Set   bool
+	Value *int
+}
+
+func (f *timeoutField) UnmarshalJSON(data []byte) error {
+	f.Set = true
+	if string(data) == "null" {
+		f.Value = nil
+		return nil
+	}
+	var seconds int
+	if err := json.Unmarshal(data, &seconds); err != nil {
+		return err
+	}
+	f.Value = &seconds
+	return nil
 }
 
 type resourceView struct {
-	ID         int64             `json:"id"`
-	Name       string            `json:"name"`
-	Type       string            `json:"type"`
-	Config     map[string]string `json:"config"`
-	HasSecrets bool              `json:"hasSecrets"`
-	Secrets    map[string]string `json:"secrets,omitempty"`
+	ID                      int64             `json:"id"`
+	Name                    string            `json:"name"`
+	Type                    string            `json:"type"`
+	Config                  map[string]string `json:"config"`
+	HasSecrets              bool              `json:"hasSecrets"`
+	Secrets                 map[string]string `json:"secrets,omitempty"`
+	ExecutionTimeoutSeconds *int              `json:"executionTimeoutSeconds"`
 }
 
 func (s *Server) handleResourceTypes(w http.ResponseWriter, r *http.Request) {
@@ -65,11 +89,17 @@ func (s *Server) handleCreateResource(w http.ResponseWriter, r *http.Request) {
 		writeResourceError(w, err)
 		return
 	}
+	timeout, err := executionTimeoutMs(input.ExecutionTimeoutSeconds, nil)
+	if err != nil {
+		writeResourceError(w, err)
+		return
+	}
 	created, err := s.store.CreateResource(r.Context(), db.Resource{
-		Name:              strings.TrimSpace(input.Name),
-		Type:              input.Type,
-		ConfigJSON:        configJSON,
-		SecretsCiphertext: secrets,
+		Name:               strings.TrimSpace(input.Name),
+		Type:               input.Type,
+		ConfigJSON:         configJSON,
+		SecretsCiphertext:  secrets,
+		ExecutionTimeoutMs: timeout,
 	})
 	if err != nil {
 		writeResourceError(w, err)
@@ -106,9 +136,15 @@ func (s *Server) handleUpdateResource(w http.ResponseWriter, r *http.Request) {
 		writeResourceError(w, err)
 		return
 	}
+	timeout, err := executionTimeoutMs(input.ExecutionTimeoutSeconds, existing.ExecutionTimeoutMs)
+	if err != nil {
+		writeResourceError(w, err)
+		return
+	}
 	existing.Name = strings.TrimSpace(input.Name)
 	existing.ConfigJSON = configJSON
 	existing.SecretsCiphertext = secrets
+	existing.ExecutionTimeoutMs = timeout
 	if err := s.store.UpdateResource(r.Context(), existing); err != nil {
 		writeResourceError(w, err)
 		return
@@ -288,11 +324,12 @@ func (s *Server) resourceView(resource db.Resource, includeSecrets bool) (resour
 		return resourceView{}, err
 	}
 	view := resourceView{
-		ID:         resource.ID,
-		Name:       resource.Name,
-		Type:       resource.Type,
-		Config:     config,
-		HasSecrets: len(resource.SecretsCiphertext) > 0,
+		ID:                      resource.ID,
+		Name:                    resource.Name,
+		Type:                    resource.Type,
+		Config:                  config,
+		HasSecrets:              len(resource.SecretsCiphertext) > 0,
+		ExecutionTimeoutSeconds: timeoutSeconds(resource.ExecutionTimeoutMs),
 	}
 	if includeSecrets && len(resource.SecretsCiphertext) > 0 {
 		plain, err := s.vault.Open(resource.SecretsCiphertext)
@@ -306,6 +343,29 @@ func (s *Server) resourceView(resource db.Resource, includeSecrets bool) (resour
 		view.Secrets = secrets
 	}
 	return view, nil
+}
+
+func executionTimeoutMs(field timeoutField, existing *int64) (*int64, error) {
+	if !field.Set {
+		return existing, nil
+	}
+	if field.Value == nil {
+		return nil, nil
+	}
+	seconds := *field.Value
+	if seconds < 1 || seconds > int(maxApprovalTimeout/time.Second) {
+		return nil, errExecutionRange
+	}
+	ms := int64(seconds) * 1000
+	return &ms, nil
+}
+
+func timeoutSeconds(ms *int64) *int {
+	if ms == nil || *ms <= 0 {
+		return nil
+	}
+	seconds := int(*ms / 1000)
+	return &seconds
 }
 
 func resourceID(w http.ResponseWriter, r *http.Request) (int64, bool) {

@@ -4,6 +4,8 @@ package mock
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"gatekeep/internal/plugin"
 )
@@ -18,8 +20,8 @@ func (Plugin) Info() plugin.Info {
 			{Name: "host", Label: "Host"},
 			{Name: "token", Label: "Token", Secret: true},
 		},
-		ToolDescription:    "Runs one Mock command and returns sucess.",
-		CommandDescription: "One Mock command, such as PING. Put it on a single line.",
+		ToolDescription:    "Runs one Mock command.",
+		CommandDescription: "One Mock command: ping, loop, or break.",
 	}
 }
 
@@ -28,15 +30,26 @@ func (Plugin) Test(_ context.Context, config, secrets map[string]string) error {
 		return errors.New("host is required")
 	}
 	if secrets["token"] != "ok" {
-		return errors.New("mock token was rejected")
+		return errors.New("wrong token")
 	}
 	return nil
 }
 
-// Execute returns true when the saved token is ok.
-func (Plugin) Execute(_ context.Context, _ string, _ map[string]string, secrets map[string]string) (any, error) {
+// Execute runs ping, loop, or break.
+// loop blocks on ctx so the execution engine can time it out or cancel it.
+func (Plugin) Execute(ctx context.Context, command string, _ map[string]string, secrets map[string]string) (any, error) {
 	if secrets["token"] != "ok" {
-		return nil, errors.New("mock token was rejected")
+		return nil, errors.New("wrong token")
 	}
-	return true, nil
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "ping":
+		return true, nil
+	case "loop":
+		<-ctx.Done()
+		return nil, ctx.Err()
+	case "break":
+		return nil, errors.New("something went wrong")
+	default:
+		return nil, fmt.Errorf("unknown command %q", strings.TrimSpace(command))
+	}
 }

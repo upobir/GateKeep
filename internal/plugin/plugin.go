@@ -31,7 +31,7 @@ type Plugin interface {
 	Info() Info
 	Test(ctx context.Context, config, secrets map[string]string) error
 	// Execute runs one approved command. The result is returned to the harness.
-	// An error means the command did not run.
+	// Stop when ctx is cancelled. An error means the command failed.
 	Execute(ctx context.Context, command string, config, secrets map[string]string) (any, error)
 }
 

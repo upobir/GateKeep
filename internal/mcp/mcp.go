@@ -32,9 +32,8 @@ const (
 )
 
 // Instructions is the guidance sent to the model.
-// Later, mention execution timeouts once that setting exists.
-func Instructions(appURL string, approvalWait time.Duration) string {
-	return fmt.Sprintf("Every tool call waits for the user to approve it in GateKeep. The command does not run until then. Write the command so the user can read it, because the user checks it before approving. Call the tool for the resource type and pass one of that tool's resource names, the command, and a one-line reason. A request expires if the user does not approve it within %s, and the command does not run. GateKeep is at %s. Give the user that link when they need to approve a request. The tool result includes a link to the specific request. Do not claim the command ran.", approvalPhrase(approvalWait), appURL)
+func Instructions(appURL string, approvalWait, executionLimit time.Duration) string {
+	return fmt.Sprintf("Every tool call waits for the user to approve it in GateKeep. The command does not run until then. Write the command so the user can read it, because the user checks it before approving. Call the tool for the resource type and pass one of that tool's resource names, the command, and a one-line reason. A request expires if the user does not approve it within %s, and the command does not run. After approval, a command stops if it runs longer than %s. GateKeep is at %s. Give the user that link when they need to approve a request. The tool result includes a link to the specific request. Do not claim the command ran.", approvalPhrase(approvalWait), approvalPhrase(executionLimit), appURL)
 }
 
 func approvalPhrase(wait time.Duration) string {
@@ -65,7 +64,10 @@ type Tool struct {
 }
 
 // Outcome is the tools/call result.
-// ok is false when the tool call failed. kind tool_call_error means the command itself failed.
+// ok is false when the tool call failed.
+// kind tool_call_error means the command itself failed.
+// user_cancelled_mid_tool_call means the user stopped it while it was running.
+// tool_call_timed_out means it ran longer than its limit.
 type Outcome struct {
 	OK     bool   `json:"ok"`
 	Kind   string `json:"kind"`
@@ -85,8 +87,8 @@ func OutputSchema() map[string]any {
 			},
 			"kind": map[string]any{
 				"type":        "string",
-				"enum":        []string{"tool_call_successful", "tool_call_error", "user_rejected", "approval_expired"},
-				"description": "tool_call_successful when the command ran. tool_call_error when the command failed. user_rejected or approval_expired when the user did not let it run.",
+				"enum":        []string{"tool_call_successful", "tool_call_error", "user_rejected", "approval_expired", "user_cancelled_mid_tool_call", "tool_call_timed_out"},
+				"description": "tool_call_successful when the command ran. tool_call_error when the command failed. user_rejected or approval_expired when the user did not let it run. user_cancelled_mid_tool_call when the user stopped a running command. tool_call_timed_out when the command ran longer than its limit.",
 			},
 			"result": map[string]any{
 				"description": "Value returned by the command. Present only when ok is true.",
@@ -97,7 +99,7 @@ func OutputSchema() map[string]any {
 			},
 			"reason": map[string]any{
 				"type":        "string",
-				"description": "Why the user rejected the command.",
+				"description": "Why the user rejected the command, or why they cancelled it while it was running.",
 			},
 		},
 		"required":             []string{"ok", "kind"},
