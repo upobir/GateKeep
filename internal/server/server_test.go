@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -97,7 +98,30 @@ func TestHealthAndEvents(t *testing.T) {
 		srv.Shutdown(ctx)
 	})
 
-	client := &http.Client{Timeout: 2 * time.Second}
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 15 * time.Second, Jar: jar}
+	locked, err := http.Get(srv.URL() + "/api/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked.Body.Close()
+	if locked.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("locked health = %d", locked.StatusCode)
+	}
+
+	setupBody := strings.NewReader(`{"password":"correct horse","confirm":"correct horse"}`)
+	setup, err := client.Post(srv.URL()+"/api/setup", "application/json", setupBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup.Body.Close()
+	if setup.StatusCode != http.StatusOK {
+		t.Fatalf("setup = %d", setup.StatusCode)
+	}
+
 	resp, err := client.Get(srv.URL() + "/api/health")
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +145,7 @@ func TestHealthAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stream, err := http.DefaultClient.Do(req)
+	stream, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,13 +183,34 @@ func TestHealthAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer downResp.Body.Close()
-	var down healthStatus
-	if err := json.NewDecoder(downResp.Body).Decode(&down); err != nil {
+	downResp.Body.Close()
+	if downResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("health without a database = %d", downResp.StatusCode)
+	}
+
+	lockResp, err := client.Post(srv.URL()+"/api/lock", "application/json", nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if down.Database != "down" {
-		t.Fatalf("database = %s", down.Database)
+	lockResp.Body.Close()
+	if lockResp.StatusCode != http.StatusOK {
+		t.Fatalf("lock = %d", lockResp.StatusCode)
+	}
+	wrong, err := client.Post(srv.URL()+"/api/unlock", "application/json", strings.NewReader(`{"password":"nope nope"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong.Body.Close()
+	if wrong.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("wrong password = %d", wrong.StatusCode)
+	}
+	after, err := client.Get(srv.URL() + "/api/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	after.Body.Close()
+	if after.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("health after a bad password = %d", after.StatusCode)
 	}
 }
 

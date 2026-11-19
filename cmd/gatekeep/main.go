@@ -16,15 +16,20 @@ import (
 
 func main() {
 	port := flag.Int("port", 8765, "listen port on 127.0.0.1")
+	dbFlag := flag.String("db", "", "sqlite database path")
 	flag.Parse()
 
 	if *port < 1 || *port > 65535 {
 		log.Fatalf("invalid port %d", *port)
 	}
 
-	dbPath, err := db.DefaultPath()
-	if err != nil {
-		log.Fatal(err)
+	dbPath := *dbFlag
+	if dbPath == "" {
+		var err error
+		dbPath, err = db.DefaultPath()
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 	store, err := db.Open(dbPath)
 	if err != nil {

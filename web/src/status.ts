@@ -5,7 +5,7 @@ export type LiveStatus = {
   database: 'up' | 'down' | 'unknown'
 }
 
-export function useLiveStatus(): LiveStatus {
+export function useLiveStatus(onLock: () => void): LiveStatus {
   const [status, setStatus] = useState<LiveStatus>({
     server: 'reconnecting',
     database: 'unknown',
@@ -27,16 +27,29 @@ export function useLiveStatus(): LiveStatus {
       setStatus({ server: 'up', database })
     }
 
+    function onAuth(event: MessageEvent) {
+      try {
+        const body = JSON.parse(event.data) as { state?: string }
+        if (body.state === 'locked') {
+          onLock()
+        }
+      } catch {
+        onLock()
+      }
+    }
+
     source.addEventListener('status', onStatus)
+    source.addEventListener('auth', onAuth)
     source.onerror = () => {
       setStatus((current) => ({ ...current, server: 'reconnecting' }))
     }
 
     return () => {
       source.removeEventListener('status', onStatus)
+      source.removeEventListener('auth', onAuth)
       source.close()
     }
-  }, [])
+  }, [onLock])
 
   return status
 }

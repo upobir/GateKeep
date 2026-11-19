@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"gatekeep/internal/db"
+	"gatekeep/internal/vault"
 	"gatekeep/internal/web"
 )
 
@@ -20,6 +21,7 @@ type Server struct {
 	http     *http.Server
 	listener net.Listener
 	store    *db.Store
+	vault    *vault.Service
 	hub      *hub
 
 	shutdownOnce sync.Once
@@ -53,10 +55,18 @@ func New(port int, store *db.Store) (*Server, error) {
 		store:    store,
 		hub:      newHub(),
 	}
+	if store != nil {
+		srv.vault = vault.New(store)
+	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/health", srv.handleHealth)
-	mux.HandleFunc("GET /api/events", srv.handleEvents)
+	mux.HandleFunc("GET /api/auth", srv.handleAuth)
+	mux.HandleFunc("POST /api/setup", srv.handleSetup)
+	mux.HandleFunc("POST /api/unlock", srv.handleUnlock)
+	mux.HandleFunc("POST /api/lock", srv.requireSession(srv.handleLock))
+	mux.HandleFunc("PUT /api/settings/unlock-duration", srv.requireSession(srv.handleUnlockDuration))
+	mux.HandleFunc("GET /api/health", srv.requireSession(srv.handleHealth))
+	mux.HandleFunc("GET /api/events", srv.requireSession(srv.handleEvents))
 	mux.Handle("/", spaHandler(content))
 	srv.http = &http.Server{Handler: mux}
 
@@ -71,6 +81,7 @@ func (s *Server) Serve() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go s.watchHealth(ctx)
+	go s.watchSession(ctx)
 
 	err := s.http.Serve(s.listener)
 	if errors.Is(err, http.ErrServerClosed) {
