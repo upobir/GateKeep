@@ -164,6 +164,127 @@ func (s *Service) Unlock(ctx context.Context, password string) (Session, error) 
 	return s.begin(ctx, key)
 }
 
+// ChangePassword re-encrypts the vault and every stored secret under a new key.
+// New copies are written first. The active generation switches only after every
+// copy exists, and the previous copies are deleted after that switch. A crash
+// before the switch keeps the current password working.
+func (s *Service) ChangePassword(ctx context.Context, current, password, confirm string) error {
+	if utf8.RuneCountInString(password) < minPassword {
+		return ErrPasswordShort
+	}
+	if password != confirm {
+		return ErrPasswordMatch
+	}
+
+	s.mu.Lock()
+	if len(s.key) == 0 || !s.now().Before(s.expires) {
+		s.mu.Unlock()
+		return ErrLocked
+	}
+	oldKey := append([]byte(nil), s.key...)
+	s.mu.Unlock()
+	defer zero(oldKey)
+
+	record, err := s.store.GetVault(ctx)
+	if errors.Is(err, db.ErrNotFound) {
+		return ErrNotSetup
+	}
+	if err != nil {
+		return err
+	}
+	if record.Time < 1 || record.Time > 10 || record.Memory < 8*1024 || record.Memory > 256*1024 || record.Threads < 1 || record.Threads > 16 {
+		return fmt.Errorf("stored password parameters are invalid")
+	}
+	typed := derive(current, record.Salt, uint32(record.Time), uint32(record.Memory), uint8(record.Threads))
+	matches := subtle.ConstantTimeCompare(typed, oldKey) == 1
+	zero(typed)
+	if !matches {
+		return ErrWrongPassword
+	}
+	if err := s.store.RecoverPasswordChange(ctx); err != nil {
+		return err
+	}
+
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return err
+	}
+	newKey := derive(password, salt, kdfTime, kdfMemory, kdfThreads)
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		zero(newKey)
+		return err
+	}
+	verifier, err := encrypt(newKey, secret)
+	zero(secret)
+	if err != nil {
+		zero(newKey)
+		return err
+	}
+	nextGen := record.Generation + 1
+	if err := s.store.CreatePendingVault(ctx, db.VaultRecord{
+		Generation: nextGen,
+		Salt:       salt,
+		Time:       kdfTime,
+		Memory:     kdfMemory,
+		Threads:    kdfThreads,
+		Verifier:   verifier,
+	}); err != nil {
+		zero(newKey)
+		return err
+	}
+
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		zero(newKey)
+		_ = s.store.RecoverPasswordChange(context.Background())
+	}()
+
+	copies, err := s.store.SecretsForGeneration(ctx, record.Generation)
+	if err != nil {
+		return err
+	}
+	for _, copy := range copies {
+		plain, err := decrypt(oldKey, copy.Ciphertext)
+		if err != nil {
+			zero(plain)
+			return fmt.Errorf("could not read a stored secret")
+		}
+		sealed, err := encrypt(newKey, plain)
+		zero(plain)
+		if err != nil {
+			return err
+		}
+		opened, err := decrypt(newKey, sealed)
+		zero(opened)
+		if err != nil {
+			return err
+		}
+		if err := s.store.PutSecretGeneration(ctx, copy.ResourceID, nextGen, sealed); err != nil {
+			return err
+		}
+	}
+	if err := s.store.ActivateGeneration(ctx, nextGen); err != nil {
+		return err
+	}
+	committed = true
+
+	s.mu.Lock()
+	if len(s.key) == 0 || !s.now().Before(s.expires) {
+		s.clear()
+		s.mu.Unlock()
+		zero(newKey)
+	} else {
+		zero(s.key)
+		s.key = newKey
+		s.mu.Unlock()
+	}
+	return s.store.DeleteRetiredSecrets(ctx)
+}
+
 func (s *Service) Lock() {
 	s.mu.Lock()
 	s.clear()

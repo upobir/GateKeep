@@ -35,6 +35,7 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	body := map[string]any{
 		"state":                 status.State,
 		"unlockDurationSeconds": status.UnlockDurationSeconds,
+		"databasePath":          s.store.Path(),
 	}
 	if status.State == "unlocked" {
 		body["expiresAt"] = status.ExpiresAt.UTC().Format(time.RFC3339Nano)
@@ -80,6 +81,36 @@ func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setSessionCookie(w, session)
+	writeJSON(w, http.StatusOK, map[string]string{"state": "unlocked"})
+}
+
+func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	if s.vault == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "database is unavailable"})
+		return
+	}
+	var body struct {
+		Current  string `json:"current"`
+		Password string `json:"password"`
+		Confirm  string `json:"confirm"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	s.secretsMu.Lock()
+	err := s.vault.ChangePassword(r.Context(), body.Current, body.Password, body.Confirm)
+	s.secretsMu.Unlock()
+	if err != nil {
+		switch {
+		case errors.Is(err, vault.ErrPasswordShort), errors.Is(err, vault.ErrPasswordMatch), errors.Is(err, vault.ErrNotSetup):
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		case errors.Is(err, vault.ErrWrongPassword), errors.Is(err, vault.ErrLocked):
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update password"})
+		}
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"state": "unlocked"})
 }
 

@@ -373,20 +373,24 @@ func (s *Server) runApproved(ctx context.Context, call db.ToolCall) (any, error)
 	if s.vault == nil || call.ResourceID == nil {
 		return nil, errors.New("the resource is no longer available")
 	}
+	s.secretsMu.Lock()
 	resource, err := s.store.GetResource(ctx, *call.ResourceID)
-	if errors.Is(err, db.ErrNotFound) {
-		return nil, errors.New("the resource is no longer available")
-	}
 	if err != nil {
+		s.secretsMu.Unlock()
+		if errors.Is(err, db.ErrNotFound) {
+			return nil, errors.New("the resource is no longer available")
+		}
 		return nil, err
 	}
 	item, ok := s.plugins.Get(resource.Type)
 	if !ok {
+		s.secretsMu.Unlock()
 		return nil, fmt.Errorf("unknown resource type %s", resource.Type)
 	}
 	config := map[string]string{}
 	if resource.ConfigJSON != "" {
 		if err := json.Unmarshal([]byte(resource.ConfigJSON), &config); err != nil {
+			s.secretsMu.Unlock()
 			return nil, err
 		}
 	}
@@ -394,13 +398,18 @@ func (s *Server) runApproved(ctx context.Context, call db.ToolCall) (any, error)
 	if len(resource.SecretsCiphertext) > 0 {
 		plain, err := s.vault.Open(resource.SecretsCiphertext)
 		if err != nil {
+			s.secretsMu.Unlock()
 			return nil, err
 		}
 		if err := json.Unmarshal(plain, &secrets); err != nil {
+			s.secretsMu.Unlock()
 			return nil, err
 		}
 	}
-	return item.Execute(ctx, call.Command, config, secrets, s.caches.Handle(resource.ID, cacheIdle(resource)))
+	cache := s.caches.Handle(resource.ID, cacheIdle(resource))
+	command := call.Command
+	s.secretsMu.Unlock()
+	return item.Execute(ctx, command, config, secrets, cache)
 }
 
 func (s *Server) registerApproval(id int64) chan db.ToolCall {

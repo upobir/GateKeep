@@ -45,6 +45,11 @@ type Server struct {
 
 	caches   *cache.Store
 	notifier func(title, body, url string)
+
+	// secretsMu covers password rotation and any read or write of a secret.
+	// Rotation copies every secret before deleting the old copies, so a write
+	// in the middle would be left on the generation that is about to be removed.
+	secretsMu sync.Mutex
 }
 
 type executionRun struct {
@@ -115,6 +120,7 @@ func New(port int, store *db.Store) (*Server, error) {
 	mux.HandleFunc("GET /api/auth", srv.handleAuth)
 	mux.HandleFunc("POST /api/setup", srv.handleSetup)
 	mux.HandleFunc("POST /api/unlock", srv.handleUnlock)
+	mux.HandleFunc("POST /api/password", srv.requireSession(srv.handleChangePassword))
 	mux.HandleFunc("POST /api/lock", srv.requireSession(srv.handleLock))
 	mux.HandleFunc("PUT /api/settings/unlock-duration", srv.requireSession(srv.handleUnlockDuration))
 	mux.HandleFunc("GET /api/settings/approval-timeout", srv.requireSession(srv.handleGetApprovalTimeout))

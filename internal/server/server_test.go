@@ -423,6 +423,87 @@ func TestShutdownClosesEventStream(t *testing.T) {
 	}
 }
 
+func TestPasswordChangeKeepsSecrets(t *testing.T) {
+	store, err := db.Open(filepath.Join(t.TempDir(), "gatekeep.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	srv, err := New(0, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		srv.Shutdown(ctx)
+	})
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 15 * time.Second, Jar: jar}
+	setup, err := client.Post(srv.URL()+"/api/setup", "application/json", strings.NewReader(`{"password":"correct horse","confirm":"correct horse"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup.Body.Close()
+	created, err := client.Post(srv.URL()+"/api/resources", "application/json", strings.NewReader(`{"name":"local","type":"mock","config":{"host":"db.example"},"secrets":{"token":"ok"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view resourceView
+	if err := json.NewDecoder(created.Body).Decode(&view); err != nil {
+		created.Body.Close()
+		t.Fatal(err)
+	}
+	created.Body.Close()
+
+	changed, err := client.Post(srv.URL()+"/api/password", "application/json", strings.NewReader(`{"current":"correct horse","password":"new password","confirm":"new password"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed.Body.Close()
+	if changed.StatusCode != http.StatusOK {
+		t.Fatalf("change = %d", changed.StatusCode)
+	}
+	lock, err := client.Post(srv.URL()+"/api/lock", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock.Body.Close()
+	old, err := client.Post(srv.URL()+"/api/unlock", "application/json", strings.NewReader(`{"password":"correct horse"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old.Body.Close()
+	if old.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("old password = %d", old.StatusCode)
+	}
+	unlocked, err := client.Post(srv.URL()+"/api/unlock", "application/json", strings.NewReader(`{"password":"new password"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlocked.Body.Close()
+	if unlocked.StatusCode != http.StatusOK {
+		t.Fatalf("new password = %d", unlocked.StatusCode)
+	}
+	one, err := client.Get(srv.URL() + fmt.Sprintf("/api/resources/%d", view.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(one.Body)
+	one.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.StatusCode != http.StatusOK || !strings.Contains(string(body), `"token":"ok"`) {
+		t.Fatalf("resource = %d %s", one.StatusCode, body)
+	}
+}
+
 func TestNewRejectsInvalidPort(t *testing.T) {
 	if _, err := New(-1, nil); err == nil {
 		t.Fatal("expected error for negative port")

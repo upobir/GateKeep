@@ -1,13 +1,22 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { errorMessage, postJSON } from './auth.ts'
 
-export function Gate({ title, children }: { title: string; children: ReactNode }) {
+export function Gate({
+  title,
+  children,
+  footer,
+}: {
+  title: string
+  children: ReactNode
+  footer?: ReactNode
+}) {
   return (
     <div className="gate">
       <section>
         <h1>{title}</h1>
         {children}
       </section>
+      {footer ? <div className="gate-footer">{footer}</div> : null}
     </div>
   )
 }
@@ -70,10 +79,17 @@ export function Setup({ onUnlocked }: { onUnlocked: () => void }) {
   )
 }
 
-export function Unlock({ onUnlocked }: { onUnlocked: () => void }) {
+export function Unlock({
+  databasePath,
+  onUnlocked,
+}: {
+  databasePath: string
+  onUnlocked: () => void
+}) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [pending, setPending] = useState(false)
+  const [forgot, setForgot] = useState(false)
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -89,7 +105,27 @@ export function Unlock({ onUnlocked }: { onUnlocked: () => void }) {
   }
 
   return (
-    <Gate title="Unlock GateKeep">
+    <Gate
+      title="Unlock GateKeep"
+      footer={
+        forgot ? (
+          <div className="forgot-note">
+            <p>There is no password recovery.</p>
+            <p>
+              {databasePath
+                ? 'Quit GateKeep, then delete this database file to reset all saved data:'
+                : 'Quit GateKeep, then delete the database file to reset all saved data.'}
+            </p>
+            {databasePath ? <code>{databasePath}</code> : null}
+            <p>Also delete the .db-wal and .db-shm files in the same folder if they are there.</p>
+          </div>
+        ) : (
+          <button type="button" className="text" onClick={() => setForgot(true)}>
+            Forgot password?
+          </button>
+        )
+      }
+    >
       <form onSubmit={submit}>
         <label>
           Password

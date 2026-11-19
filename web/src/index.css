@@ -164,8 +164,9 @@ p {
 
 .gate {
   display: grid;
+  grid-template-rows: 1fr auto;
+  box-sizing: border-box;
   min-height: 100vh;
-  place-items: center;
   padding: 1.5rem;
 }
 
@@ -174,6 +175,41 @@ p {
   flex-direction: column;
   gap: 0.85rem;
   width: min(28rem, 100%);
+  align-self: center;
+  justify-self: center;
+}
+
+.gate-footer {
+  justify-self: center;
+  width: min(36rem, 100%);
+  padding-top: 1rem;
+  text-align: center;
+}
+
+.forgot-note {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.forgot-note code {
+  display: block;
+  margin: 0.15rem 0;
+  color: inherit;
+  text-align: left;
+  word-break: break-all;
+  user-select: all;
+}
+
+button.text {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 .settings,

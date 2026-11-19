@@ -38,7 +38,7 @@ export default function App() {
     return <Setup onUnlocked={reload} />
   }
   if (auth.state === 'locked') {
-    return <Unlock onUnlocked={reload} />
+    return <Unlock databasePath={auth.databasePath ?? ''} onUnlocked={reload} />
   }
   return <Shell auth={auth} onChange={reload} />
 }

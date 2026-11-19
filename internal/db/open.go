@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 
 type Store struct {
 	db        *sql.DB
+	path      string
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -50,12 +52,16 @@ func Open(path string) (*Store, error) {
 	}
 	sqlDB.SetMaxOpenConns(1)
 
-	store := &Store{db: sqlDB}
+	store := &Store{db: sqlDB, path: path}
 	if err := store.configure(); err != nil {
 		sqlDB.Close()
 		return nil, err
 	}
 	if err := migrate(sqlDB); err != nil {
+		sqlDB.Close()
+		return nil, err
+	}
+	if err := store.RecoverPasswordChange(context.Background()); err != nil {
 		sqlDB.Close()
 		return nil, err
 	}
@@ -71,6 +77,13 @@ func (s *Store) configure() error {
 		return fmt.Errorf("foreign keys are off")
 	}
 	return nil
+}
+
+func (s *Store) Path() string {
+	if s == nil {
+		return ""
+	}
+	return s.path
 }
 
 func (s *Store) Ping() error {

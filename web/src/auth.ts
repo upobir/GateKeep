@@ -2,6 +2,7 @@ export type AuthInfo = {
   state: 'setup' | 'locked' | 'unlocked'
   unlockDurationSeconds: number
   expiresAt?: string
+  databasePath?: string
 }
 
 export async function getAuth(): Promise<AuthInfo> {

@@ -3,6 +3,7 @@ import { postJSON, type AuthInfo } from './auth.ts'
 import { History } from './History.tsx'
 import { Queue } from './Queue.tsx'
 import { Resources } from './resources/Resources.tsx'
+import { Password } from './Password.tsx'
 import { Settings } from './Settings.tsx'
 import { useLiveStatus } from './status.ts'
 
@@ -11,6 +12,7 @@ const pages = [
   { path: '/history', label: 'History' },
   { path: '/resources', label: 'Resources' },
   { path: '/settings', label: 'Settings' },
+  { path: '/password', label: 'Password update' },
 ]
 
 function usePath() {
@@ -91,6 +93,8 @@ export function Shell({ auth, onChange }: { auth: AuthInfo; onChange: () => void
         <h1>{page ? page.label : 'Not found'}</h1>
         {path === '/settings' ? (
           <Settings auth={auth} onChange={onChange} />
+        ) : path === '/password' ? (
+          <Password />
         ) : path === '/resources' ? (
           <Resources />
         ) : path === '/' || focusID != null ? (

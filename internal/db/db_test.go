@@ -265,6 +265,14 @@ func TestPendingToolCallsResolveOnceInOrder(t *testing.T) {
 	}
 }
 
+func TestStorePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gatekeep.db")
+	store := openStore(t, path)
+	if store.Path() != path {
+		t.Fatalf("path = %s", store.Path())
+	}
+}
+
 func TestDefaultPath(t *testing.T) {
 	path, err := DefaultPath()
 	if err != nil {

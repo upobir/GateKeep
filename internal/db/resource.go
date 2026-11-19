@@ -28,16 +28,27 @@ func (s *Store) CreateResource(ctx context.Context, resource Resource) (Resource
 		resource.ConfigJSON = "{}"
 	}
 	now := time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Resource{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `
 		INSERT INTO resources(
-			name, type, config_json, secrets_ciphertext, execution_timeout_ms, cache_idle_ms, created_at, updated_at
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-	`, resource.Name, resource.Type, resource.ConfigJSON, resource.SecretsCiphertext, resource.ExecutionTimeoutMs, resource.CacheIdleMs, formatTime(now), formatTime(now))
+			name, type, config_json, execution_timeout_ms, cache_idle_ms, created_at, updated_at
+		) VALUES(?, ?, ?, ?, ?, ?, ?)
+	`, resource.Name, resource.Type, resource.ConfigJSON, resource.ExecutionTimeoutMs, resource.CacheIdleMs, formatTime(now), formatTime(now))
 	if err != nil {
 		return Resource{}, err
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
+		return Resource{}, err
+	}
+	if err := putResourceSecret(ctx, tx, id, resource.SecretsCiphertext); err != nil {
+		return Resource{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return Resource{}, err
 	}
 	resource.ID = id
@@ -47,10 +58,7 @@ func (s *Store) CreateResource(ctx context.Context, resource Resource) (Resource
 }
 
 func (s *Store) ListResources(ctx context.Context) ([]Resource, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, type, config_json, secrets_ciphertext, execution_timeout_ms, cache_idle_ms, created_at, updated_at
-		FROM resources ORDER BY name
-	`)
+	rows, err := s.db.QueryContext(ctx, resourceQuery(`ORDER BY name`))
 	if err != nil {
 		return nil, err
 	}
@@ -74,10 +82,7 @@ func (s *Store) ListResources(ctx context.Context) ([]Resource, error) {
 }
 
 func (s *Store) ResourceByName(ctx context.Context, name string) (Resource, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, type, config_json, secrets_ciphertext, execution_timeout_ms, cache_idle_ms, created_at, updated_at
-		FROM resources WHERE name = ?
-	`, name)
+	row := s.db.QueryRowContext(ctx, resourceQuery(`WHERE name = ?`), name)
 	resource, err := scanResource(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Resource{}, ErrNotFound
@@ -86,10 +91,7 @@ func (s *Store) ResourceByName(ctx context.Context, name string) (Resource, erro
 }
 
 func (s *Store) GetResource(ctx context.Context, id int64) (Resource, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, type, config_json, secrets_ciphertext, execution_timeout_ms, cache_idle_ms, created_at, updated_at
-		FROM resources WHERE id = ?
-	`, id)
+	row := s.db.QueryRowContext(ctx, resourceQuery(`WHERE id = ?`), id)
 	resource, err := scanResource(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Resource{}, ErrNotFound
@@ -105,21 +107,61 @@ func (s *Store) UpdateResource(ctx context.Context, resource Resource) error {
 		resource.ConfigJSON = "{}"
 	}
 	resource.UpdatedAt = time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `
 		UPDATE resources SET
 			name = ?,
 			type = ?,
 			config_json = ?,
-			secrets_ciphertext = ?,
 			execution_timeout_ms = ?,
 			cache_idle_ms = ?,
 			updated_at = ?
 		WHERE id = ?
-	`, resource.Name, resource.Type, resource.ConfigJSON, resource.SecretsCiphertext, resource.ExecutionTimeoutMs, resource.CacheIdleMs, formatTime(resource.UpdatedAt), resource.ID)
+	`, resource.Name, resource.Type, resource.ConfigJSON, resource.ExecutionTimeoutMs, resource.CacheIdleMs, formatTime(resource.UpdatedAt), resource.ID)
 	if err != nil {
 		return err
 	}
-	return rowsAffected(result)
+	if err := rowsAffected(result); err != nil {
+		return err
+	}
+	if err := putResourceSecret(ctx, tx, resource.ID, resource.SecretsCiphertext); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// resourceSecretExpr is the ciphertext for the active password generation.
+// Generation 0 holds secrets written before a password exists.
+const resourceSecretExpr = `(SELECT ciphertext FROM resource_secrets WHERE resource_id = resources.id AND generation = COALESCE((SELECT generation FROM vault WHERE state = 'active'), 0))`
+
+func resourceQuery(tail string) string {
+	return `
+		SELECT id, name, type, config_json, ` + resourceSecretExpr + `, execution_timeout_ms, cache_idle_ms, created_at, updated_at
+		FROM resources ` + tail
+}
+
+func putResourceSecret(ctx context.Context, tx *sql.Tx, resourceID int64, ciphertext []byte) error {
+	var generation int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE((SELECT generation FROM vault WHERE state = 'active'), 0)
+	`).Scan(&generation); err != nil {
+		return err
+	}
+	if len(ciphertext) == 0 {
+		_, err := tx.ExecContext(ctx, `
+			DELETE FROM resource_secrets WHERE resource_id = ? AND generation = ?
+		`, resourceID, generation)
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO resource_secrets(resource_id, generation, ciphertext) VALUES(?, ?, ?)
+		ON CONFLICT(resource_id, generation) DO UPDATE SET ciphertext = excluded.ciphertext
+	`, resourceID, generation, ciphertext)
+	return err
 }
 
 func (s *Store) DeleteResource(ctx context.Context, id int64) error {

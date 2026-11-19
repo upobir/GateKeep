@@ -92,6 +92,217 @@ func TestSessionExpires(t *testing.T) {
 	}
 }
 
+func TestChangePasswordReencryptsSecrets(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t, filepath.Join(t.TempDir(), "gatekeep.db"))
+	svc := New(store)
+	if _, err := svc.Setup(ctx, "correct horse", "correct horse"); err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := svc.Seal([]byte("db password"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := store.CreateResource(ctx, db.Resource{
+		Name:              "orders",
+		Type:              "mysql",
+		SecretsCiphertext: sealed,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateResource(ctx, db.Resource{Name: "plain", Type: "mysql"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ChangePassword(ctx, "wrong password", "new password", "new password"); !errors.Is(err, ErrWrongPassword) {
+		t.Fatalf("wrong password = %v", err)
+	}
+	if err := svc.ChangePassword(ctx, "correct horse", "short", "short"); !errors.Is(err, ErrPasswordShort) {
+		t.Fatalf("short password = %v", err)
+	}
+	if err := svc.ChangePassword(ctx, "correct horse", "new password", "other"); !errors.Is(err, ErrPasswordMatch) {
+		t.Fatalf("mismatch = %v", err)
+	}
+	if err := svc.ChangePassword(ctx, "correct horse", "new password", "new password"); err != nil {
+		t.Fatal(err)
+	}
+
+	svc.Lock()
+	if _, err := svc.Unlock(ctx, "correct horse"); !errors.Is(err, ErrWrongPassword) {
+		t.Fatalf("old password = %v", err)
+	}
+	if _, err := svc.Unlock(ctx, "new password"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetResource(ctx, resource.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := svc.Open(got.SecretsCiphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != "db password" {
+		t.Fatalf("plain = %q", plain)
+	}
+	record, err := store.GetVault(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Generation != 2 {
+		t.Fatalf("generation = %d", record.Generation)
+	}
+	retired, err := store.SecretsForGeneration(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retired) != 0 {
+		t.Fatalf("retired copies = %d", len(retired))
+	}
+}
+
+func TestInterruptedPasswordChangeKeepsOldPassword(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "gatekeep.db")
+	store := openStore(t, path)
+	svc := New(store)
+	if _, err := svc.Setup(ctx, "correct horse", "correct horse"); err != nil {
+		t.Fatal(err)
+	}
+	firstSeal, err := svc.Seal([]byte("one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSeal, err := svc.Seal([]byte("two"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.CreateResource(ctx, db.Resource{Name: "one", Type: "mysql", SecretsCiphertext: firstSeal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.CreateResource(ctx, db.Resource{Name: "two", Type: "mysql", SecretsCiphertext: secondSeal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.GetVault(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := record
+	pending.Generation++
+	if err := store.CreatePendingVault(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutSecretGeneration(ctx, first.ID, pending.Generation, []byte("partial-copy")); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ActivateGeneration(ctx, pending.Generation); err == nil {
+		t.Fatal("expected activation to wait for every secret copy")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened := openStore(t, path)
+	active, err := reopened.GetVault(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Generation != record.Generation {
+		t.Fatalf("generation = %d", active.Generation)
+	}
+	leftover, err := reopened.SecretsForGeneration(ctx, pending.Generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leftover) != 0 {
+		t.Fatalf("pending copies = %d", len(leftover))
+	}
+	svc = New(reopened)
+	if _, err := svc.Unlock(ctx, "correct horse"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := reopened.GetResource(ctx, second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := svc.Open(got.SecretsCiphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != "two" {
+		t.Fatalf("plain = %q", plain)
+	}
+}
+
+func TestRetiredSecretsAreDroppedOnOpen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "gatekeep.db")
+	store := openStore(t, path)
+	svc := New(store)
+	if _, err := svc.Setup(ctx, "correct horse", "correct horse"); err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := svc.Seal([]byte("db password"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := store.CreateResource(ctx, db.Resource{Name: "orders", Type: "mysql", SecretsCiphertext: sealed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ChangePassword(ctx, "correct horse", "new password", "new password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutSecretGeneration(ctx, resource.ID, 1, []byte("old-copy")); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.GetVault(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := record
+	pending.Generation++
+	if err := store.CreatePendingVault(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened := openStore(t, path)
+	retired, err := reopened.SecretsForGeneration(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retired) != 0 {
+		t.Fatalf("retired copies = %d", len(retired))
+	}
+	active, err := reopened.GetVault(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Generation != 2 {
+		t.Fatalf("generation = %d", active.Generation)
+	}
+	svc = New(reopened)
+	if _, err := svc.Unlock(ctx, "new password"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := reopened.GetResource(ctx, resource.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := svc.Open(got.SecretsCiphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != "db password" {
+		t.Fatalf("plain = %q", plain)
+	}
+}
+
 func openStore(t *testing.T, path string) *db.Store {
 	t.Helper()
 	store, err := db.Open(path)

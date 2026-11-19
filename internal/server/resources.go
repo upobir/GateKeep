@@ -86,6 +86,8 @@ func (s *Server) handleCreateResource(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.secretsMu.Lock()
+	defer s.secretsMu.Unlock()
 	configJSON, secrets, err := s.sealResource(input, nil)
 	if err != nil {
 		writeResourceError(w, err)
@@ -130,6 +132,8 @@ func (s *Server) handleUpdateResource(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.secretsMu.Lock()
+	defer s.secretsMu.Unlock()
 	existing, err := s.store.GetResource(r.Context(), id)
 	if err != nil {
 		writeResourceError(w, err)
@@ -185,6 +189,8 @@ func (s *Server) handleGetResource(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "database is unavailable"})
 		return
 	}
+	s.secretsMu.Lock()
+	defer s.secretsMu.Unlock()
 	resource, err := s.store.GetResource(r.Context(), id)
 	if err != nil {
 		writeResourceError(w, err)
@@ -203,7 +209,10 @@ func (s *Server) handleDeleteResource(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.store.DeleteResource(r.Context(), id); err != nil {
+	s.secretsMu.Lock()
+	err := s.store.DeleteResource(r.Context(), id)
+	s.secretsMu.Unlock()
+	if err != nil {
 		writeResourceError(w, err)
 		return
 	}
@@ -216,6 +225,8 @@ func (s *Server) handleTestResource(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.secretsMu.Lock()
+	defer s.secretsMu.Unlock()
 	var existing *db.Resource
 	if input.ID != 0 {
 		stored, err := s.store.GetResource(r.Context(), input.ID)
