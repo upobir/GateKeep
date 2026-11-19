@@ -37,7 +37,6 @@ type ToolCall struct {
 	ID              int64
 	ResourceID      *int64
 	ResourceName    string
-	HarnessID       *int64
 	HarnessName     string
 	Command         string
 	Reason          string
@@ -59,12 +58,12 @@ func (s *Store) CreateToolCall(ctx context.Context, call ToolCall) (ToolCall, er
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO tool_calls(
-			resource_id, resource_name, harness_id, harness_name,
+			resource_id, resource_name, harness_name,
 			command, reason, status, decision, decision_reason,
 			execution_status, result, created_at, updated_at, decided_at, finished_at
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		call.ResourceID, call.ResourceName, call.HarnessID, call.HarnessName,
+		call.ResourceID, call.ResourceName, call.HarnessName,
 		call.Command, call.Reason, call.Status, call.Decision, call.DecisionReason,
 		call.ExecutionStatus, call.Result, formatTime(now), formatTime(now), formatTimePtr(call.DecidedAt), formatTimePtr(call.FinishedAt),
 	)
@@ -83,7 +82,7 @@ func (s *Store) CreateToolCall(ctx context.Context, call ToolCall) (ToolCall, er
 
 func (s *Store) GetToolCall(ctx context.Context, id int64) (ToolCall, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, resource_id, resource_name, harness_id, harness_name,
+		SELECT id, resource_id, resource_name, harness_name,
 			command, reason, status, decision, decision_reason,
 			execution_status, result, created_at, updated_at, decided_at, finished_at
 		FROM tool_calls WHERE id = ?
@@ -121,7 +120,7 @@ func (s *Store) UpdateToolCall(ctx context.Context, call ToolCall) error {
 
 func (s *Store) ListPendingToolCalls(ctx context.Context) ([]ToolCall, error) {
 	return s.listToolCalls(ctx, `
-		SELECT id, resource_id, resource_name, harness_id, harness_name,
+		SELECT id, resource_id, resource_name, harness_name,
 			command, reason, status, decision, decision_reason,
 			execution_status, result, created_at, updated_at, decided_at, finished_at
 		FROM tool_calls
@@ -134,7 +133,7 @@ func (s *Store) ListPendingToolCalls(ctx context.Context) ([]ToolCall, error) {
 // Review means the command already ran and the user has not sent or rejected the result.
 func (s *Store) ListQueueToolCalls(ctx context.Context) ([]ToolCall, error) {
 	return s.listToolCalls(ctx, `
-		SELECT id, resource_id, resource_name, harness_id, harness_name,
+		SELECT id, resource_id, resource_name, harness_name,
 			command, reason, status, decision, decision_reason,
 			execution_status, result, created_at, updated_at, decided_at, finished_at
 		FROM tool_calls
@@ -428,7 +427,7 @@ func (s *Store) listFinishedToolCalls(ctx context.Context, window RecentWindow, 
 		return nil, fmt.Errorf("recent window is invalid")
 	}
 	const columns = `
-		SELECT id, resource_id, resource_name, harness_id, harness_name,
+		SELECT id, resource_id, resource_name, harness_name,
 			command, reason, status, decision, decision_reason,
 			execution_status, result, created_at, updated_at, decided_at, finished_at
 		FROM tool_calls`
@@ -490,12 +489,12 @@ func (s *Store) listToolCalls(ctx context.Context, query string, args ...any) ([
 
 func scanToolCall(row rowScanner) (ToolCall, error) {
 	var call ToolCall
-	var resourceID, harnessID sql.NullInt64
+	var resourceID sql.NullInt64
 	var decision, decisionReason, executionStatus, result sql.NullString
 	var createdAt, updatedAt string
 	var decidedAt, finishedAt sql.NullString
 	err := row.Scan(
-		&call.ID, &resourceID, &call.ResourceName, &harnessID, &call.HarnessName,
+		&call.ID, &resourceID, &call.ResourceName, &call.HarnessName,
 		&call.Command, &call.Reason, &call.Status, &decision, &decisionReason,
 		&executionStatus, &result, &createdAt, &updatedAt, &decidedAt, &finishedAt,
 	)
@@ -504,9 +503,6 @@ func scanToolCall(row rowScanner) (ToolCall, error) {
 	}
 	if resourceID.Valid {
 		call.ResourceID = &resourceID.Int64
-	}
-	if harnessID.Valid {
-		call.HarnessID = &harnessID.Int64
 	}
 	call.Decision = nullString(decision)
 	call.DecisionReason = nullString(decisionReason)

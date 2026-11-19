@@ -303,16 +303,10 @@ func (s *Server) queueToolCall(w http.ResponseWriter, r *http.Request, req rpcRe
 		return
 	}
 
-	harness, err := s.store.EnsureHarness(r.Context(), harnessName)
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, req.ID, mcp.CodeInternal, "could not record the harness", nil)
-		return
-	}
 	stored, err := s.store.CreateToolCall(r.Context(), db.ToolCall{
 		ResourceID:   &resource.ID,
 		ResourceName: resource.Name,
-		HarnessID:    &harness.ID,
-		HarnessName:  harness.Name,
+		HarnessName:  harnessName,
 		Command:      call.Command,
 		Reason:       call.Reason,
 		Status:       db.ToolCallPending,

@@ -27,19 +27,10 @@ func TestRecordsPersistAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	harness, err := store.CreateHarness(ctx, "Claude Desktop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	token, err := store.CreateHarnessToken(ctx, harness.ID, "hash-1")
-	if err != nil {
-		t.Fatal(err)
-	}
 	call, err := store.CreateToolCall(ctx, ToolCall{
 		ResourceID:   &resource.ID,
 		ResourceName: resource.Name,
-		HarnessID:    &harness.ID,
-		HarnessName:  harness.Name,
+		HarnessName:  "Claude Desktop",
 		Command:      "SELECT id FROM orders",
 		Reason:       "count open orders",
 		Status:       "pending",
@@ -54,9 +45,6 @@ func TestRecordsPersistAcrossReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.PutSetting(ctx, setting.Key, "10m"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.UpdateHarness(ctx, harness.ID, "Claude"); err != nil {
 		t.Fatal(err)
 	}
 	decision := "reject"
@@ -88,13 +76,6 @@ func TestRecordsPersistAcrossReopen(t *testing.T) {
 	if gotSetting.Value != "10m" {
 		t.Fatalf("setting = %+v", gotSetting)
 	}
-	gotHarness, err := reopened.GetHarness(ctx, harness.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotHarness.Name != "Claude" {
-		t.Fatalf("harness = %+v", gotHarness)
-	}
 	gotCall, err := reopened.GetToolCall(ctx, call.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -102,20 +83,14 @@ func TestRecordsPersistAcrossReopen(t *testing.T) {
 	if gotCall.Status != "rejected" || gotCall.Decision == nil || *gotCall.Decision != "reject" {
 		t.Fatalf("tool call = %+v", gotCall)
 	}
-	if gotCall.ResourceName != "orders" {
-		t.Fatalf("resource snapshot = %s", gotCall.ResourceName)
+	if gotCall.ResourceName != "orders" || gotCall.HarnessName != "Claude Desktop" {
+		t.Fatalf("snapshots = %s %s", gotCall.ResourceName, gotCall.HarnessName)
 	}
 
-	if err := reopened.DeleteHarnessToken(ctx, token.ID); err != nil {
-		t.Fatal(err)
-	}
 	if err := reopened.DeleteToolCall(ctx, call.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := reopened.DeleteResource(ctx, resource.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := reopened.DeleteHarness(ctx, harness.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := reopened.DeleteSetting(ctx, setting.Key); err != nil {
@@ -135,19 +110,10 @@ func TestDeletingResourceKeepsToolCallSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	harness, err := store.CreateHarness(ctx, "Cursor")
-	if err != nil {
-		t.Fatal(err)
-	}
-	token, err := store.CreateHarnessToken(ctx, harness.ID, "hash-2")
-	if err != nil {
-		t.Fatal(err)
-	}
 	call, err := store.CreateToolCall(ctx, ToolCall{
 		ResourceID:   &resource.ID,
 		ResourceName: resource.Name,
-		HarnessID:    &harness.ID,
-		HarnessName:  harness.Name,
+		HarnessName:  "Cursor",
 		Command:      "GET user:1",
 		Reason:       "read a cached user",
 		Status:       "pending",
@@ -163,22 +129,8 @@ func TestDeletingResourceKeepsToolCallSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ResourceID != nil || got.ResourceName != "cache" {
+	if got.ResourceID != nil || got.ResourceName != "cache" || got.HarnessName != "Cursor" {
 		t.Fatalf("tool call = %+v", got)
-	}
-
-	if err := store.DeleteHarness(ctx, harness.ID); err != nil {
-		t.Fatal(err)
-	}
-	got, err = store.GetToolCall(ctx, call.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.HarnessID != nil || got.HarnessName != "Cursor" {
-		t.Fatalf("tool call = %+v", got)
-	}
-	if err := store.DeleteHarnessToken(ctx, token.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("token delete error = %v", err)
 	}
 }
 
