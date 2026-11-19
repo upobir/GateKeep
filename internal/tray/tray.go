@@ -1,0 +1,72 @@
+package tray
+
+import (
+	"log"
+	"os/exec"
+	"runtime"
+
+	"gatekeep/internal/icon"
+	"github.com/getlantern/systray"
+)
+
+type Options struct {
+	URL     string
+	OnReady func()
+	OnQuit  func()
+}
+
+func Run(opts Options) {
+	systray.Run(func() { onReady(opts) }, func() {
+		if opts.OnQuit != nil {
+			opts.OnQuit()
+		}
+	})
+}
+
+func Quit() {
+	systray.Quit()
+}
+
+func onReady(opts Options) {
+	png, err := icon.PNG(64)
+	if err != nil {
+		log.Fatalf("icon: %v", err)
+	}
+	systray.SetIcon(png)
+	systray.SetTooltip("GateKeep")
+
+	openItem := systray.AddMenuItem("Open UI", "Open GateKeep in the browser")
+	systray.AddSeparator()
+	quitItem := systray.AddMenuItem("Quit", "Quit GateKeep")
+
+	if opts.OnReady != nil {
+		opts.OnReady()
+	}
+
+	go func() {
+		for {
+			select {
+			case <-openItem.ClickedCh:
+				if err := openURL(opts.URL); err != nil {
+					log.Printf("open ui: %v", err)
+				}
+			case <-quitItem.ClickedCh:
+				systray.Quit()
+				return
+			}
+		}
+	}()
+}
+
+func openURL(raw string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", raw)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", raw)
+	default:
+		cmd = exec.Command("xdg-open", raw)
+	}
+	return cmd.Start()
+}
