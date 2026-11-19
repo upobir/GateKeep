@@ -46,6 +46,7 @@ export function Settings({ auth, onChange }: { auth: AuthInfo; onChange: () => v
       </form>
       <ApprovalTimeout />
       <ExecutionTimeout />
+      <RecentWindow />
     </div>
   )
 }
@@ -105,6 +106,88 @@ function ApprovalTimeout() {
       <button type="submit">Save</button>
     </form>
   )
+}
+
+function RecentWindow() {
+  const [count, setCount] = useState('1')
+  const [unit, setUnit] = useState('hours')
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fetch('/api/settings/recent-window')
+        .then(async (response) => {
+          if (!response.ok) {
+            setError(await errorMessage(response))
+            return
+          }
+          const body = (await response.json()) as { count: number; unit: string }
+          setCount(String(body.count))
+          setUnit(body.unit)
+        })
+        .catch(() => setError('Could not load the recent window'))
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    setMessage('')
+    setError('')
+    const response = await fetch('/api/settings/recent-window', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ count: Number(count), unit }),
+    })
+    if (!response.ok) {
+      setError(await errorMessage(response))
+      return
+    }
+    setMessage('Saved. The Approval Queue and History use this window now.')
+  }
+
+  return (
+    <form onSubmit={save}>
+      <fieldset className="recent-window">
+        <legend>Recent tool calls</legend>
+        <div className="recent-fields">
+          <label>
+            Last
+            <input
+              type="number"
+              min={1}
+              max={1000000}
+              required
+              value={count}
+              onChange={(event) => setCount(event.target.value)}
+            />
+          </label>
+          <label>
+            Unit
+            <select value={unit} onChange={(event) => setUnit(event.target.value)}>
+              <option value="seconds">seconds</option>
+              <option value="minutes">minutes</option>
+              <option value="hours">hours</option>
+              <option value="days">days</option>
+              <option value="calls">tool calls</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+      {error ? <p className="error">{error}</p> : null}
+      {message ? <p>{message}</p> : <p>{recentHelp(unit)}</p>}
+      <button type="submit">Save</button>
+    </form>
+  )
+}
+
+function recentHelp(unit: string) {
+  if (unit === 'calls') {
+    return 'That many of the latest finished calls stay on the Approval Queue. Older calls move to History.'
+  }
+  const boundary = unit === 'days' ? 'midnight' : unit === 'hours' ? 'hour' : unit === 'minutes' ? 'minute' : 'second'
+  return `The window starts at the beginning of the current ${boundary} and includes the previous ones. Older calls move to History.`
 }
 
 function ExecutionTimeout() {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { errorMessage } from './auth.ts'
 
-type Approval = {
+export type Approval = {
   id: number
   resourceName: string
   harnessName: string
@@ -14,6 +14,7 @@ type Approval = {
   result?: string
   createdAt: string
   decidedAt?: string
+  finishedAt?: string
 }
 
 export function Queue({ focusID, tick }: { focusID: number | null; tick: number }) {
@@ -80,14 +81,16 @@ export function Queue({ focusID, tick }: { focusID: number | null; tick: number 
     return <p>Loading…</p>
   }
 
-  const pending = items ?? []
-  const settled = focused && focused.status !== 'pending' && focused.status !== 'executing' ? focused : null
+  const listed = items ?? []
+  const active = listed.filter((call) => call.status === 'pending' || call.status === 'executing')
+  const recent = listed.filter((call) => call.status !== 'pending' && call.status !== 'executing')
+  const settled = focused && !listed.some((call) => call.id === focused.id) ? focused : null
 
   return (
     <div className="approvals">
-      {pending.length > 0 ? (
+      {active.length > 0 ? (
         <div className="queue-head">
-          <span className="count-pill">{pending.length} waiting</span>
+          <span className="count-pill">{active.length} waiting</span>
         </div>
       ) : null}
       {error ? <p className="error">{error}</p> : null}
@@ -95,21 +98,44 @@ export function Queue({ focusID, tick }: { focusID: number | null; tick: number 
       {settled ? (
         <ApprovalCard call={settled} current now={now} timeoutSeconds={timeoutSeconds} onDecided={load} />
       ) : null}
-      {pending.length === 0 && !settled && !missing ? <p>No commands are waiting for approval.</p> : null}
-      <ul className="approval-list">
-        {pending.map((call) => (
-          <li key={call.id}>
-            <ApprovalCard
-              call={call}
-              current={call.id === focusID}
-              now={now}
-              timeoutSeconds={timeoutSeconds}
-              onDecided={load}
-            />
-          </li>
-        ))}
-      </ul>
+      {active.length === 0 ? <p>No pending</p> : null}
+      <CallList calls={active} focusID={focusID} now={now} timeoutSeconds={timeoutSeconds} onDecided={load} />
+      <div className="recent-rule">Recent</div>
+      <CallList calls={recent} focusID={focusID} now={now} timeoutSeconds={timeoutSeconds} onDecided={load} />
     </div>
+  )
+}
+
+export function CallList({
+  calls,
+  focusID,
+  now,
+  timeoutSeconds,
+  onDecided,
+}: {
+  calls: Approval[]
+  focusID: number | null
+  now: number
+  timeoutSeconds: number
+  onDecided: () => void
+}) {
+  if (calls.length === 0) {
+    return null
+  }
+  return (
+    <ul className="approval-list">
+      {calls.map((call) => (
+        <li key={call.id}>
+          <ApprovalCard
+            call={call}
+            current={call.id === focusID}
+            now={now}
+            timeoutSeconds={timeoutSeconds}
+            onDecided={onDecided}
+          />
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -141,6 +167,8 @@ function ApprovalCard({
   const [error, setError] = useState('')
   const waiting = call.status === 'pending'
   const executing = call.status === 'executing' || running
+  const result = successResult(call)
+  const failure = failureNote(call)
 
   async function approve() {
     setRunning(true)
@@ -194,13 +222,20 @@ function ApprovalCard({
   }
 
   return (
-    <article id={`approval-${call.id}`} className={current ? 'approval-card current' : 'approval-card'}>
+    <article
+      id={`approval-${call.id}`}
+      className={['approval-card', waiting || executing ? 'open' : 'settled', current ? 'current' : ''].filter(Boolean).join(' ')}
+    >
       <header className="approval-heading">
         <div>
           <h2>{call.resourceName}</h2>
           <p className="muted">{call.harnessName}</p>
         </div>
-        <p className="time-left">{executing ? executionLeft(call, now) : waiting ? timeLeft(call.createdAt, timeoutSeconds, now) : statusLine(call)}</p>
+        {waiting || executing ? (
+          <p className="time-left">{executing ? executionLeft(call, now) : timeLeft(call.createdAt, timeoutSeconds, now)}</p>
+        ) : (
+          <CallBadges call={call} />
+        )}
       </header>
       <div className={executing ? 'call-body running' : 'call-body'}>
         <div className="why">
@@ -208,6 +243,13 @@ function ApprovalCard({
           <strong>{call.reason}</strong>
         </div>
         <p className="command">{call.command}</p>
+        {result ? <p className="result-box">{result}</p> : null}
+        {failure ? (
+          <p className="notice-box">
+            <span>{failure.label}</span>
+            {failure.text}
+          </p>
+        ) : null}
         {executing ? <span className="spinner" role="status" aria-label="Running" /> : null}
       </div>
       {executing ? (
@@ -251,7 +293,108 @@ function ApprovalCard({
         </>
       ) : null}
       {error ? <p className="error">{error}</p> : null}
+      {!waiting && !executing ? <DeleteCall id={call.id} onDeleted={onDecided} /> : null}
     </article>
+  )
+}
+
+function CallBadges({ call }: { call: Approval }) {
+  const decision = decisionBadge(call)
+  const outcome = outcomeBadge(call)
+  const stamp = call.finishedAt || call.decidedAt
+  return (
+    <div className="call-meta">
+      {decision ? <span className={`badge badge-${decision.toLowerCase()}`}>{decision}</span> : null}
+      {outcome ? <span className={`badge badge-${outcome.toLowerCase().replace(' ', '-')}`}>{outcome}</span> : null}
+      {stamp ? <time className="time-left">{when(stamp)}</time> : null}
+    </div>
+  )
+}
+
+function decisionBadge(call: Approval) {
+  if (call.status === 'approved' || call.status === 'cancelled') {
+    return 'Approved'
+  }
+  if (call.status === 'expired') {
+    return 'Expired'
+  }
+  if (call.status === 'rejected') {
+    return 'Rejected'
+  }
+  return ''
+}
+
+function outcomeBadge(call: Approval) {
+  if (call.status === 'cancelled' || call.executionStatus === 'cancelled') {
+    return 'Cancelled'
+  }
+  if (call.executionStatus === 'ok') {
+    return 'Success'
+  }
+  if (call.executionStatus === 'error') {
+    return 'Error'
+  }
+  if (call.executionStatus === 'timeout') {
+    return 'Timed Out'
+  }
+  return ''
+}
+
+function successResult(call: Approval) {
+  if (call.executionStatus === 'ok' && call.result) {
+    return call.result
+  }
+  return ''
+}
+
+function failureNote(call: Approval) {
+  if (call.status === 'rejected' && call.decisionReason) {
+    return { label: 'Reject reason', text: call.decisionReason }
+  }
+  if ((call.status === 'cancelled' || call.executionStatus === 'cancelled') && call.decisionReason) {
+    return { label: 'Cancel reason', text: call.decisionReason }
+  }
+  if (call.executionStatus === 'error' && call.result) {
+    return { label: 'Error', text: call.result }
+  }
+  return null
+}
+
+function DeleteCall({ id, onDeleted }: { id: number; onDeleted: () => void }) {
+  const [confirming, setConfirming] = useState(false)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState('')
+
+  async function remove() {
+    setPending(true)
+    setError('')
+    const response = await fetch(`/api/approvals/${id}`, { method: 'DELETE' })
+    setPending(false)
+    if (!response.ok) {
+      setError(await errorMessage(response))
+      return
+    }
+    onDeleted()
+  }
+
+  return (
+    <div className="delete-call">
+      {confirming ? (
+        <div className="form-actions">
+          <button type="button" className="danger" disabled={pending} onClick={() => void remove()}>
+            Delete this call
+          </button>
+          <button type="button" disabled={pending} onClick={() => setConfirming(false)}>
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button type="button" className="quiet" onClick={() => setConfirming(true)}>
+          Delete
+        </button>
+      )}
+      {error ? <p className="error">{error}</p> : null}
+    </div>
   )
 }
 
@@ -272,32 +415,6 @@ function timeLeft(createdAt: string, timeoutSeconds: number, now: number) {
     return 'expiring'
   }
   return `${left}s left`
-}
-
-function statusLine(call: Approval) {
-  const whenDecided = call.decidedAt ? when(call.decidedAt) : ''
-  if (call.status === 'rejected') {
-    return `Rejected ${whenDecided}. ${call.decisionReason ?? ''}`.trim()
-  }
-  if (call.status === 'approved' && call.executionStatus === 'ok') {
-    return `Approved ${whenDecided}. Result ${call.result ?? ''}`.trim()
-  }
-  if (call.status === 'cancelled') {
-    return `Cancelled ${whenDecided}. ${call.decisionReason ?? ''}`.trim()
-  }
-  if (call.status === 'approved' && call.executionStatus === 'timeout') {
-    return `Approved ${whenDecided}. Execution timed out.`.trim()
-  }
-  if (call.status === 'approved' && call.executionStatus === 'error') {
-    return `Approved ${whenDecided}. ${call.result ?? 'The command failed.'}`.trim()
-  }
-  if (call.status === 'approved') {
-    return `Approved ${whenDecided}. The command has not executed yet.`.trim()
-  }
-  if (call.status === 'expired') {
-    return `Expired ${whenDecided}. ${call.decisionReason ?? ''}`.trim()
-  }
-  return call.status
 }
 
 function when(value: string) {

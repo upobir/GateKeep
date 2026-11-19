@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { postJSON, type AuthInfo } from './auth.ts'
+import { History } from './History.tsx'
 import { Queue } from './Queue.tsx'
 import { Resources } from './resources/Resources.tsx'
 import { Settings } from './Settings.tsx'
@@ -7,8 +8,8 @@ import { useLiveStatus } from './status.ts'
 
 const pages = [
   { path: '/', label: 'Approval Queue' },
-  { path: '/resources', label: 'Resources' },
   { path: '/history', label: 'History' },
+  { path: '/resources', label: 'Resources' },
   { path: '/settings', label: 'Settings' },
 ]
 
@@ -89,7 +90,7 @@ export function Shell({ auth, onChange }: { auth: AuthInfo; onChange: () => void
         ) : path === '/' || focusID != null ? (
           <Queue focusID={focusID} tick={queueTick} />
         ) : path === '/history' ? (
-          <p>Nothing here yet.</p>
+          <History tick={queueTick} />
         ) : (
           <p>That page does not exist.</p>
         )}

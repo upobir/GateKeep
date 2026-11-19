@@ -180,9 +180,9 @@ func (s *Server) executeApproved(ctx context.Context, call db.ToolCall) (db.Tool
 
 func (s *Server) finishCancelled(call db.ToolCall, reason string) (db.ToolCall, error) {
 	now := time.Now().UTC()
-	decision := db.DecisionCancel
+	decision := db.DecisionApprove
 	status := db.ExecutionCancelled
-	call.Status = db.ToolCallCancelled
+	call.Status = db.ToolCallApproved
 	call.Decision = &decision
 	call.DecisionReason = nil
 	if reason != "" {

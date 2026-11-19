@@ -128,8 +128,21 @@ func TestApprovalQueueOrdersAndAnswers(t *testing.T) {
 		t.Fatal(err)
 	}
 	empty.Body.Close()
-	if len(left) != 0 {
-		t.Fatalf("pending = %+v", left)
+	if len(left) != 2 || left[0].Command != "SELECT 2" || left[0].Status != db.ToolCallRejected || left[1].Command != "ping" || left[1].Status != db.ToolCallApproved {
+		t.Fatalf("recent = %+v", left)
+	}
+	historyResp, err := client.Get(srv.URL() + "/api/history")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var history []approvalView
+	if err := json.NewDecoder(historyResp.Body).Decode(&history); err != nil {
+		historyResp.Body.Close()
+		t.Fatal(err)
+	}
+	historyResp.Body.Close()
+	if historyResp.StatusCode != http.StatusOK || len(history) != 0 {
+		t.Fatalf("history = %d %+v", historyResp.StatusCode, history)
 	}
 
 	missing, err := client.Get(srv.URL() + "/api/approvals/999")
@@ -400,7 +413,7 @@ func TestCancelReturnsToTheQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	cancel.Body.Close()
-	if cancel.StatusCode != http.StatusOK || stopped.Status != db.ToolCallCancelled || stopped.DecisionReason != "stop this run" {
+	if cancel.StatusCode != http.StatusOK || stopped.Status != db.ToolCallApproved || stopped.ExecutionStatus != db.ExecutionCancelled || stopped.Decision != db.DecisionApprove || stopped.DecisionReason != "stop this run" {
 		t.Fatalf("cancel = %d %+v", cancel.StatusCode, stopped)
 	}
 	if status := <-approved; status != http.StatusOK {

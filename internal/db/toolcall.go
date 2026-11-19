@@ -118,7 +118,7 @@ func (s *Store) UpdateToolCall(ctx context.Context, call ToolCall) error {
 }
 
 func (s *Store) ListPendingToolCalls(ctx context.Context) ([]ToolCall, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	return s.listToolCalls(ctx, `
 		SELECT id, resource_id, resource_name, harness_id, harness_name,
 			command, reason, status, decision, decision_reason,
 			execution_status, result, created_at, updated_at, decided_at, finished_at
@@ -126,31 +126,11 @@ func (s *Store) ListPendingToolCalls(ctx context.Context) ([]ToolCall, error) {
 		WHERE status = ?
 		ORDER BY created_at, id
 	`, ToolCallPending)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var calls []ToolCall
-	for rows.Next() {
-		call, err := scanToolCall(rows)
-		if err != nil {
-			return nil, err
-		}
-		calls = append(calls, call)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if calls == nil {
-		calls = []ToolCall{}
-	}
-	return calls, nil
 }
 
-// ListQueueToolCalls returns requests the approval screen still has to show.
+// ListQueueToolCalls returns pending and executing calls, oldest first.
 func (s *Store) ListQueueToolCalls(ctx context.Context) ([]ToolCall, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	return s.listToolCalls(ctx, `
 		SELECT id, resource_id, resource_name, harness_id, harness_name,
 			command, reason, status, decision, decision_reason,
 			execution_status, result, created_at, updated_at, decided_at, finished_at
@@ -158,26 +138,58 @@ func (s *Store) ListQueueToolCalls(ctx context.Context) ([]ToolCall, error) {
 		WHERE status IN (?, ?)
 		ORDER BY created_at, id
 	`, ToolCallPending, ToolCallExecuting)
+}
+
+// ListApprovalToolCalls returns pending and executing calls, then finished
+// calls that are still inside window.
+func (s *Store) ListApprovalToolCalls(ctx context.Context, window RecentWindow, now time.Time) ([]ToolCall, error) {
+	active, err := s.ListQueueToolCalls(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var calls []ToolCall
-	for rows.Next() {
-		call, err := scanToolCall(rows)
-		if err != nil {
-			return nil, err
-		}
-		calls = append(calls, call)
-	}
-	if err := rows.Err(); err != nil {
+	recent, err := s.listFinishedToolCalls(ctx, window, now, false)
+	if err != nil {
 		return nil, err
 	}
-	if calls == nil {
-		calls = []ToolCall{}
+	return append(active, recent...), nil
+}
+
+// ListHistoryToolCalls returns finished calls outside window, newest first.
+func (s *Store) ListHistoryToolCalls(ctx context.Context, window RecentWindow, now time.Time) ([]ToolCall, error) {
+	return s.listFinishedToolCalls(ctx, window, now, true)
+}
+
+// ClearHistoryToolCalls deletes finished calls outside window.
+func (s *Store) ClearHistoryToolCalls(ctx context.Context, window RecentWindow, now time.Time) (int64, error) {
+	if !window.Valid() {
+		return 0, fmt.Errorf("recent window is invalid")
 	}
-	return calls, nil
+	var (
+		result sql.Result
+		err    error
+	)
+	if start, timed := window.Start(now); timed {
+		result, err = s.db.ExecContext(ctx, `
+			DELETE FROM tool_calls
+			WHERE status NOT IN (?, ?)
+				AND (finished_at IS NULL OR finished_at < ?)
+		`, ToolCallPending, ToolCallExecuting, formatTime(start))
+	} else {
+		result, err = s.db.ExecContext(ctx, `
+			DELETE FROM tool_calls
+			WHERE status NOT IN (?, ?)
+				AND id NOT IN (
+					SELECT id FROM tool_calls
+					WHERE status NOT IN (?, ?) AND finished_at IS NOT NULL
+					ORDER BY finished_at DESC, id DESC
+					LIMIT ?
+				)
+		`, ToolCallPending, ToolCallExecuting, ToolCallPending, ToolCallExecuting, window.Count)
+	}
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 // ReopenToolCall puts an executing request back in the queue.
@@ -294,6 +306,71 @@ func (s *Store) DeleteToolCall(ctx context.Context, id int64) error {
 		return err
 	}
 	return rowsAffected(result)
+}
+
+func (s *Store) listFinishedToolCalls(ctx context.Context, window RecentWindow, now time.Time, history bool) ([]ToolCall, error) {
+	if !window.Valid() {
+		return nil, fmt.Errorf("recent window is invalid")
+	}
+	const columns = `
+		SELECT id, resource_id, resource_name, harness_id, harness_name,
+			command, reason, status, decision, decision_reason,
+			execution_status, result, created_at, updated_at, decided_at, finished_at
+		FROM tool_calls`
+	if start, timed := window.Start(now); timed {
+		if history {
+			return s.listToolCalls(ctx, columns+`
+				WHERE status NOT IN (?, ?) AND (finished_at IS NULL OR finished_at < ?)
+				ORDER BY finished_at IS NULL, finished_at DESC, id DESC
+			`, ToolCallPending, ToolCallExecuting, formatTime(start))
+		}
+		return s.listToolCalls(ctx, columns+`
+			WHERE status NOT IN (?, ?) AND finished_at >= ?
+			ORDER BY finished_at DESC, id DESC
+		`, ToolCallPending, ToolCallExecuting, formatTime(start))
+	}
+
+	if history {
+		return s.listToolCalls(ctx, columns+`
+			WHERE status NOT IN (?, ?)
+				AND id NOT IN (
+					SELECT id FROM tool_calls
+					WHERE status NOT IN (?, ?) AND finished_at IS NOT NULL
+					ORDER BY finished_at DESC, id DESC
+					LIMIT ?
+				)
+			ORDER BY finished_at IS NULL, finished_at DESC, id DESC
+		`, ToolCallPending, ToolCallExecuting, ToolCallPending, ToolCallExecuting, window.Count)
+	}
+	return s.listToolCalls(ctx, columns+`
+		WHERE status NOT IN (?, ?) AND finished_at IS NOT NULL
+		ORDER BY finished_at DESC, id DESC
+		LIMIT ?
+	`, ToolCallPending, ToolCallExecuting, window.Count)
+}
+
+func (s *Store) listToolCalls(ctx context.Context, query string, args ...any) ([]ToolCall, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var calls []ToolCall
+	for rows.Next() {
+		call, err := scanToolCall(rows)
+		if err != nil {
+			return nil, err
+		}
+		calls = append(calls, call)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if calls == nil {
+		calls = []ToolCall{}
+	}
+	return calls, nil
 }
 
 func scanToolCall(row rowScanner) (ToolCall, error) {

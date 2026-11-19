@@ -43,6 +43,7 @@ type approvalView struct {
 	Result                  string `json:"result,omitempty"`
 	CreatedAt               string `json:"createdAt"`
 	DecidedAt               string `json:"decidedAt,omitempty"`
+	FinishedAt              string `json:"finishedAt,omitempty"`
 }
 
 func approvalJSON(call db.ToolCall) approvalView {
@@ -63,6 +64,9 @@ func approvalJSON(call db.ToolCall) approvalView {
 	}
 	if call.DecidedAt != nil {
 		view.DecidedAt = call.DecidedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if call.FinishedAt != nil {
+		view.FinishedAt = call.FinishedAt.UTC().Format(time.RFC3339Nano)
 	}
 	if call.ExecutionStatus != nil {
 		view.ExecutionStatus = *call.ExecutionStatus
@@ -155,7 +159,7 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "database is unavailable"})
 		return
 	}
-	calls, err := s.store.ListQueueToolCalls(r.Context())
+	calls, err := s.store.ListApprovalToolCalls(r.Context(), s.recentWindow(r.Context()), time.Now())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not list approvals"})
 		return
@@ -359,6 +363,13 @@ func (s *Server) writeToolDecision(w http.ResponseWriter, rpcID json.RawMessage,
 func decisionOutcome(call db.ToolCall) mcp.Outcome {
 	switch call.Status {
 	case db.ToolCallApproved:
+		if call.ExecutionStatus != nil && *call.ExecutionStatus == db.ExecutionCancelled {
+			reason := ""
+			if call.DecisionReason != nil {
+				reason = *call.DecisionReason
+			}
+			return mcp.Outcome{OK: false, Kind: "user_cancelled_mid_tool_call", Reason: reason}
+		}
 		if call.ExecutionStatus != nil && *call.ExecutionStatus == db.ExecutionTimeout {
 			return mcp.Failed("tool_call_timed_out", "Execution timed out.")
 		}
