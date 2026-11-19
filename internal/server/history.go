@@ -108,7 +108,7 @@ func (s *Server) handleDeleteApproval(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not delete the tool call"})
 		return
 	}
-	if call.Status == db.ToolCallPending || call.Status == db.ToolCallExecuting {
+	if call.Status == db.ToolCallPending || call.Status == db.ToolCallExecuting || call.Status == db.ToolCallReview {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "this request is still open"})
 		return
 	}

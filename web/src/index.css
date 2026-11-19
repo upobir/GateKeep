@@ -541,6 +541,15 @@ button.approve {
   background: var(--accent);
 }
 
+button.see {
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.5rem 0.9rem;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+}
+
 button.danger {
   background: var(--danger);
   align-self: end;

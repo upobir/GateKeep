@@ -22,6 +22,7 @@ const (
 
 	restartExpiryReason    = "GateKeep restarted before the user decided."
 	restartExecutionReason = "GateKeep restarted during execution."
+	restartReviewReason    = "GateKeep restarted before the user sent the result."
 	stoppedExpiryReason    = "GateKeep stopped before the user decided."
 	disconnectReason       = "The harness disconnected before the user decided."
 	timeoutReason          = "Approval timed out. The user did not approve this command."
@@ -197,6 +198,64 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 	s.writeDecision(w, r, db.ToolCallExecuting, db.DecisionApprove, "")
 }
 
+func (s *Server) handleSeeResults(w http.ResponseWriter, r *http.Request) {
+	id, err := approvalID(r)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if s.store == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "database is unavailable"})
+		return
+	}
+	current, err := s.store.GetToolCall(r.Context(), id)
+	if err != nil {
+		writeApprovalError(w, err)
+		return
+	}
+	run, err := s.armRun(r.Context(), current)
+	if err != nil {
+		writeApprovalError(w, err)
+		return
+	}
+	call, err := s.store.BeginExecution(r.Context(), id)
+	if err != nil {
+		s.disarmRun(id, run)
+		writeApprovalError(w, err)
+		return
+	}
+	call, err = s.executeApproved(call, true, run)
+	if err != nil {
+		writeApprovalError(w, err)
+		return
+	}
+	if call.Status == db.ToolCallReview {
+		s.hub.Publish("approvals", fmt.Sprintf(`{"id":%d}`, call.ID))
+	} else {
+		s.deliverApproval(call)
+	}
+	writeJSON(w, http.StatusOK, s.presentApproval(r.Context(), call))
+}
+
+func (s *Server) handleSendResults(w http.ResponseWriter, r *http.Request) {
+	id, err := approvalID(r)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if s.store == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "database is unavailable"})
+		return
+	}
+	call, err := s.store.FinishReview(r.Context(), id, db.DecisionApprove, "")
+	if err != nil {
+		writeApprovalError(w, err)
+		return
+	}
+	s.deliverApproval(call)
+	writeJSON(w, http.StatusOK, s.presentApproval(r.Context(), call))
+}
+
 func (s *Server) handleReject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Reason string `json:"reason"`
@@ -204,7 +263,43 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
+	if strings.TrimSpace(body.Reason) == "" {
+		writeApprovalError(w, errReasonRequired)
+		return
+	}
+	id, err := approvalID(r)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if s.store == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "database is unavailable"})
+		return
+	}
+	current, err := s.store.GetToolCall(r.Context(), id)
+	if err != nil {
+		writeApprovalError(w, err)
+		return
+	}
+	if current.Status == db.ToolCallReview {
+		call, err := s.store.FinishReview(r.Context(), id, db.DecisionReject, body.Reason)
+		if err != nil {
+			writeApprovalError(w, err)
+			return
+		}
+		s.deliverApproval(call)
+		writeJSON(w, http.StatusOK, s.presentApproval(r.Context(), call))
+		return
+	}
 	s.writeDecision(w, r, db.ToolCallRejected, db.DecisionReject, body.Reason)
+}
+
+func approvalID(r *http.Request) (int64, error) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id < 1 {
+		return 0, fmt.Errorf("not found")
+	}
+	return id, nil
 }
 
 func (s *Server) writeDecision(w http.ResponseWriter, r *http.Request, status, decision, reason string) {
@@ -243,17 +338,29 @@ func (s *Server) decideApproval(ctx context.Context, id int64, status, decision,
 	if decision == db.DecisionReject && strings.TrimSpace(reason) == "" {
 		return db.ToolCall{}, errReasonRequired
 	}
-	run := decision == db.DecisionApprove
+	execute := decision == db.DecisionApprove
 	storedStatus := status
-	if run {
+	var armed *executionRun
+	if execute {
 		storedStatus = db.ToolCallExecuting
+		current, err := s.store.GetToolCall(ctx, id)
+		if err != nil {
+			return db.ToolCall{}, err
+		}
+		armed, err = s.armRun(ctx, current)
+		if err != nil {
+			return db.ToolCall{}, err
+		}
 	}
-	call, err := s.store.ResolveToolCall(ctx, id, storedStatus, decision, reason, !run)
+	call, err := s.store.ResolveToolCall(ctx, id, storedStatus, decision, reason, !execute)
 	if err != nil {
+		if armed != nil {
+			s.disarmRun(id, armed)
+		}
 		return db.ToolCall{}, err
 	}
-	if run {
-		call, err = s.executeApproved(ctx, call)
+	if execute {
+		call, err = s.executeApproved(call, false, armed)
 		if err != nil {
 			return db.ToolCall{}, err
 		}
@@ -345,14 +452,68 @@ func (s *Server) waitForApproval(w http.ResponseWriter, r *http.Request, rpcID j
 			if s.baseCtx.Err() != nil {
 				reason = stoppedExpiryReason
 			}
-			call, err := s.store.ResolveToolCall(context.Background(), id, db.ToolCallExpired, db.DecisionExpire, reason, true)
-			if err != nil {
+			s.abandonApproval(id, reason)
+		}
+	}
+}
+
+// abandonApproval closes a call whose harness is gone.
+// A running command is allowed to finish. A withheld result is expired.
+// The run is registered before the call is marked executing, so this waits on that run.
+func (s *Server) abandonApproval(id int64, reason string) {
+	ctx := context.Background()
+	missedRun := false
+	for {
+		call, err := s.store.GetToolCall(ctx, id)
+		if err != nil {
+			return
+		}
+		switch call.Status {
+		case db.ToolCallPending:
+			missedRun = false
+			if _, err := s.store.ResolveToolCall(ctx, id, db.ToolCallExpired, db.DecisionExpire, reason, true); err != nil {
+				if errors.Is(err, db.ErrNotPending) {
+					continue
+				}
 				return
 			}
 			s.hub.Publish("approvals", fmt.Sprintf(`{"id":%d}`, id))
-			s.writeToolDecision(w, rpcID, call, modern)
+			return
+		case db.ToolCallReview:
+			missedRun = false
+			if _, err := s.store.ExpireReviewToolCall(ctx, id, reason); err != nil {
+				if errors.Is(err, db.ErrNotPending) {
+					continue
+				}
+				return
+			}
+			s.hub.Publish("approvals", fmt.Sprintf(`{"id":%d}`, id))
+			return
+		case db.ToolCallExecuting:
+			if s.waitRun(id) {
+				missedRun = false
+				continue
+			}
+			// The run finished between the read above and this wait. Look once more.
+			if missedRun {
+				return
+			}
+			missedRun = true
+		default:
+			return
 		}
 	}
+}
+
+func (s *Server) waitRun(id int64) bool {
+	s.execMu.Lock()
+	run := s.execs[id]
+	s.execMu.Unlock()
+	if run == nil {
+		return false
+	}
+	<-run.done
+	return true
 }
 
 func (s *Server) writeToolDecision(w http.ResponseWriter, rpcID json.RawMessage, call db.ToolCall, modern bool) {
@@ -361,18 +522,18 @@ func (s *Server) writeToolDecision(w http.ResponseWriter, rpcID json.RawMessage,
 }
 
 func decisionOutcome(call db.ToolCall) mcp.Outcome {
+	if call.ExecutionStatus != nil && *call.ExecutionStatus == db.ExecutionCancelled {
+		reason := ""
+		if call.DecisionReason != nil {
+			reason = *call.DecisionReason
+		}
+		return mcp.Outcome{OK: false, Kind: "user_cancelled_mid_tool_call", Reason: reason}
+	}
+	if call.ExecutionStatus != nil && *call.ExecutionStatus == db.ExecutionTimeout {
+		return mcp.Failed("tool_call_timed_out", "Execution timed out.")
+	}
 	switch call.Status {
 	case db.ToolCallApproved:
-		if call.ExecutionStatus != nil && *call.ExecutionStatus == db.ExecutionCancelled {
-			reason := ""
-			if call.DecisionReason != nil {
-				reason = *call.DecisionReason
-			}
-			return mcp.Outcome{OK: false, Kind: "user_cancelled_mid_tool_call", Reason: reason}
-		}
-		if call.ExecutionStatus != nil && *call.ExecutionStatus == db.ExecutionTimeout {
-			return mcp.Failed("tool_call_timed_out", "Execution timed out.")
-		}
 		if call.ExecutionStatus != nil && *call.ExecutionStatus == db.ExecutionOK && call.Result != nil {
 			var value any
 			if err := json.Unmarshal([]byte(*call.Result), &value); err == nil {

@@ -12,9 +12,11 @@ import (
 const (
 	ToolCallPending   = "pending"
 	ToolCallExecuting = "executing"
+	ToolCallReview    = "review"
 	ToolCallApproved  = "approved"
 	ToolCallRejected  = "rejected"
 	ToolCallCancelled = "cancelled"
+	ToolCallTimedOut  = "timeout"
 	ToolCallExpired   = "expired"
 
 	DecisionApprove = "approve"
@@ -128,16 +130,17 @@ func (s *Store) ListPendingToolCalls(ctx context.Context) ([]ToolCall, error) {
 	`, ToolCallPending)
 }
 
-// ListQueueToolCalls returns pending and executing calls, oldest first.
+// ListQueueToolCalls returns calls still in front of the user, oldest first.
+// Review means the command already ran and the user has not sent or rejected the result.
 func (s *Store) ListQueueToolCalls(ctx context.Context) ([]ToolCall, error) {
 	return s.listToolCalls(ctx, `
 		SELECT id, resource_id, resource_name, harness_id, harness_name,
 			command, reason, status, decision, decision_reason,
 			execution_status, result, created_at, updated_at, decided_at, finished_at
 		FROM tool_calls
-		WHERE status IN (?, ?)
+		WHERE status IN (?, ?, ?)
 		ORDER BY created_at, id
-	`, ToolCallPending, ToolCallExecuting)
+	`, ToolCallPending, ToolCallExecuting, ToolCallReview)
 }
 
 // ListApprovalToolCalls returns pending and executing calls, then finished
@@ -171,20 +174,20 @@ func (s *Store) ClearHistoryToolCalls(ctx context.Context, window RecentWindow, 
 	if start, timed := window.Start(now); timed {
 		result, err = s.db.ExecContext(ctx, `
 			DELETE FROM tool_calls
-			WHERE status NOT IN (?, ?)
+			WHERE status NOT IN (?, ?, ?)
 				AND (finished_at IS NULL OR finished_at < ?)
-		`, ToolCallPending, ToolCallExecuting, formatTime(start))
+		`, ToolCallPending, ToolCallExecuting, ToolCallReview, formatTime(start))
 	} else {
 		result, err = s.db.ExecContext(ctx, `
 			DELETE FROM tool_calls
-			WHERE status NOT IN (?, ?)
+			WHERE status NOT IN (?, ?, ?)
 				AND id NOT IN (
 					SELECT id FROM tool_calls
-					WHERE status NOT IN (?, ?) AND finished_at IS NOT NULL
+					WHERE status NOT IN (?, ?, ?) AND finished_at IS NOT NULL
 					ORDER BY finished_at DESC, id DESC
 					LIMIT ?
 				)
-		`, ToolCallPending, ToolCallExecuting, ToolCallPending, ToolCallExecuting, window.Count)
+		`, ToolCallPending, ToolCallExecuting, ToolCallReview, ToolCallPending, ToolCallExecuting, ToolCallReview, window.Count)
 	}
 	if err != nil {
 		return 0, err
@@ -223,6 +226,118 @@ func (s *Store) ReopenToolCall(ctx context.Context, id int64) (ToolCall, error) 
 		return ToolCall{}, ErrNotPending
 	}
 	return s.GetToolCall(ctx, id)
+}
+
+// BeginExecution moves a pending call into execution without a decision.
+// See Results uses this. Approve records its decision through ResolveToolCall.
+func (s *Store) BeginExecution(ctx context.Context, id int64) (ToolCall, error) {
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE tool_calls SET
+			status = ?,
+			decision = NULL,
+			decision_reason = NULL,
+			execution_status = NULL,
+			result = NULL,
+			updated_at = ?,
+			decided_at = ?,
+			finished_at = NULL
+		WHERE id = ? AND status = ?
+	`, ToolCallExecuting, formatTime(now), formatTime(now), id, ToolCallPending)
+	if err != nil {
+		return ToolCall{}, err
+	}
+	if err := s.changed(ctx, result, id); err != nil {
+		return ToolCall{}, err
+	}
+	return s.GetToolCall(ctx, id)
+}
+
+// FinishReview records the choice to send or withhold a result already in hand.
+// The execution status and result stay as they were.
+func (s *Store) FinishReview(ctx context.Context, id int64, decision, reason string) (ToolCall, error) {
+	if decision != DecisionApprove && decision != DecisionReject {
+		return ToolCall{}, fmt.Errorf("tool call resolution is incomplete")
+	}
+	status := ToolCallApproved
+	if decision == DecisionReject {
+		status = ToolCallRejected
+	}
+	now := time.Now().UTC()
+	var decisionReason any
+	if trimmed := strings.TrimSpace(reason); trimmed != "" {
+		decisionReason = trimmed
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE tool_calls SET
+			status = ?,
+			decision = ?,
+			decision_reason = ?,
+			updated_at = ?,
+			decided_at = ?,
+			finished_at = ?
+		WHERE id = ? AND status = ?
+	`, status, decision, decisionReason, formatTime(now), formatTime(now), formatTime(now), id, ToolCallReview)
+	if err != nil {
+		return ToolCall{}, err
+	}
+	if err := s.changed(ctx, result, id); err != nil {
+		return ToolCall{}, err
+	}
+	return s.GetToolCall(ctx, id)
+}
+
+// ExpireReviewToolCall closes one withheld result because nobody is left to receive it.
+func (s *Store) ExpireReviewToolCall(ctx context.Context, id int64, reason string) (ToolCall, error) {
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE tool_calls SET
+			status = ?,
+			decision = ?,
+			decision_reason = ?,
+			updated_at = ?,
+			decided_at = ?,
+			finished_at = ?
+		WHERE id = ? AND status = ?
+	`, ToolCallExpired, DecisionExpire, reason, formatTime(now), formatTime(now), formatTime(now), id, ToolCallReview)
+	if err != nil {
+		return ToolCall{}, err
+	}
+	if err := s.changed(ctx, result, id); err != nil {
+		return ToolCall{}, err
+	}
+	return s.GetToolCall(ctx, id)
+}
+
+// ExpireReviewToolCalls closes withheld results after a restart.
+// The result stays, so history still shows what ran.
+func (s *Store) ExpireReviewToolCalls(ctx context.Context, reason string) error {
+	now := time.Now().UTC()
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE tool_calls SET
+			status = ?,
+			decision = ?,
+			decision_reason = ?,
+			updated_at = ?,
+			decided_at = ?,
+			finished_at = ?
+		WHERE status = ?
+	`, ToolCallExpired, DecisionExpire, reason, formatTime(now), formatTime(now), formatTime(now), ToolCallReview)
+	return err
+}
+
+func (s *Store) changed(ctx context.Context, result sql.Result, id int64) error {
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		if _, err := s.GetToolCall(ctx, id); err != nil {
+			return err
+		}
+		return ErrNotPending
+	}
+	return nil
 }
 
 // ResolveToolCall moves a pending tool call to status.
@@ -320,33 +435,33 @@ func (s *Store) listFinishedToolCalls(ctx context.Context, window RecentWindow, 
 	if start, timed := window.Start(now); timed {
 		if history {
 			return s.listToolCalls(ctx, columns+`
-				WHERE status NOT IN (?, ?) AND (finished_at IS NULL OR finished_at < ?)
+				WHERE status NOT IN (?, ?, ?) AND (finished_at IS NULL OR finished_at < ?)
 				ORDER BY finished_at IS NULL, finished_at DESC, id DESC
-			`, ToolCallPending, ToolCallExecuting, formatTime(start))
+			`, ToolCallPending, ToolCallExecuting, ToolCallReview, formatTime(start))
 		}
 		return s.listToolCalls(ctx, columns+`
-			WHERE status NOT IN (?, ?) AND finished_at >= ?
+			WHERE status NOT IN (?, ?, ?) AND finished_at >= ?
 			ORDER BY finished_at DESC, id DESC
-		`, ToolCallPending, ToolCallExecuting, formatTime(start))
+		`, ToolCallPending, ToolCallExecuting, ToolCallReview, formatTime(start))
 	}
 
 	if history {
 		return s.listToolCalls(ctx, columns+`
-			WHERE status NOT IN (?, ?)
+			WHERE status NOT IN (?, ?, ?)
 				AND id NOT IN (
 					SELECT id FROM tool_calls
-					WHERE status NOT IN (?, ?) AND finished_at IS NOT NULL
+					WHERE status NOT IN (?, ?, ?) AND finished_at IS NOT NULL
 					ORDER BY finished_at DESC, id DESC
 					LIMIT ?
 				)
 			ORDER BY finished_at IS NULL, finished_at DESC, id DESC
-		`, ToolCallPending, ToolCallExecuting, ToolCallPending, ToolCallExecuting, window.Count)
+		`, ToolCallPending, ToolCallExecuting, ToolCallReview, ToolCallPending, ToolCallExecuting, ToolCallReview, window.Count)
 	}
 	return s.listToolCalls(ctx, columns+`
-		WHERE status NOT IN (?, ?) AND finished_at IS NOT NULL
+		WHERE status NOT IN (?, ?, ?) AND finished_at IS NOT NULL
 		ORDER BY finished_at DESC, id DESC
 		LIMIT ?
-	`, ToolCallPending, ToolCallExecuting, window.Count)
+	`, ToolCallPending, ToolCallExecuting, ToolCallReview, window.Count)
 }
 
 func (s *Store) listToolCalls(ctx context.Context, query string, args ...any) ([]ToolCall, error) {

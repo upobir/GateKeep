@@ -8,6 +8,7 @@ export type Approval = {
   command: string
   reason: string
   status: string
+  decision?: string
   decisionReason?: string
   executionStatus?: string
   executionTimeoutSeconds?: number
@@ -82,8 +83,8 @@ export function Queue({ focusID, tick }: { focusID: number | null; tick: number 
   }
 
   const listed = items ?? []
-  const active = listed.filter((call) => call.status === 'pending' || call.status === 'executing')
-  const recent = listed.filter((call) => call.status !== 'pending' && call.status !== 'executing')
+  const active = listed.filter((call) => call.status === 'pending' || call.status === 'executing' || call.status === 'review')
+  const recent = listed.filter((call) => call.status !== 'pending' && call.status !== 'executing' && call.status !== 'review')
   const settled = focused && !listed.some((call) => call.id === focused.id) ? focused : null
 
   return (
@@ -166,9 +167,11 @@ function ApprovalCard({
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
   const waiting = call.status === 'pending'
-  const executing = call.status === 'executing' || running
+  const reviewing = call.status === 'review'
+  const executing = !reviewing && (call.status === 'executing' || running)
+  const open = waiting || executing || reviewing
   const result = successResult(call)
-  const failure = failureNote(call)
+  const notes = callNotes(call)
 
   async function approve() {
     setRunning(true)
@@ -221,10 +224,37 @@ function ApprovalCard({
     onDecided()
   }
 
+  async function seeResults() {
+    setRunning(true)
+    setReason('')
+    setError('')
+    const response = await fetch(`/api/approvals/${call.id}/results`, { method: 'POST' })
+    setRunning(false)
+    if (!response.ok) {
+      setError(await errorMessage(response))
+      onDecided()
+      return
+    }
+    onDecided()
+  }
+
+  async function sendResults() {
+    setPending(true)
+    setError('')
+    const response = await fetch(`/api/approvals/${call.id}/send`, { method: 'POST' })
+    setPending(false)
+    if (!response.ok) {
+      setError(await errorMessage(response))
+      onDecided()
+      return
+    }
+    onDecided()
+  }
+
   return (
     <article
       id={`approval-${call.id}`}
-      className={['approval-card', waiting || executing ? 'open' : 'settled', current ? 'current' : ''].filter(Boolean).join(' ')}
+      className={['approval-card', open ? 'open' : 'settled', current ? 'current' : ''].filter(Boolean).join(' ')}
     >
       <header className="approval-heading">
         <div>
@@ -233,6 +263,8 @@ function ApprovalCard({
         </div>
         {waiting || executing ? (
           <p className="time-left">{executing ? executionLeft(call, now) : timeLeft(call.createdAt, timeoutSeconds, now)}</p>
+        ) : reviewing ? (
+          <p className="time-left">Results ready</p>
         ) : (
           <CallBadges call={call} />
         )}
@@ -244,12 +276,12 @@ function ApprovalCard({
         </div>
         <p className="command">{call.command}</p>
         {result ? <p className="result-box">{result}</p> : null}
-        {failure ? (
-          <p className="notice-box">
-            <span>{failure.label}</span>
-            {failure.text}
+        {notes.map((note) => (
+          <p className="notice-box" key={note.label}>
+            <span>{note.label}</span>
+            {note.text}
           </p>
-        ) : null}
+        ))}
         {executing ? <span className="spinner" role="status" aria-label="Running" /> : null}
       </div>
       {executing ? (
@@ -269,31 +301,41 @@ function ApprovalCard({
         </form>
       ) : null}
       {waiting && !running ? (
-        <>
-          <div className="decision-row">
-            <button type="button" className="approve" disabled={pending} onClick={approve}>
-              Approve
-            </button>
-          </div>
-          <form className="reject-row" onSubmit={reject}>
-            <label>
-              Reject reason
-              <textarea
-                required
-                rows={3}
-                placeholder="Why this command should not run"
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-              />
-            </label>
-            <button type="submit" className="danger" disabled={pending}>
-              Reject
-            </button>
-          </form>
-        </>
+        <div className="decision-row">
+          <button type="button" className="approve" disabled={pending} onClick={approve}>
+            Approve
+          </button>
+          <button type="button" className="see" disabled={pending} onClick={seeResults}>
+            See results
+          </button>
+        </div>
+      ) : null}
+      {reviewing ? (
+        <div className="decision-row">
+          <button type="button" className="approve" disabled={pending} onClick={sendResults}>
+            Send results
+          </button>
+        </div>
+      ) : null}
+      {(waiting && !running) || reviewing ? (
+        <form className="reject-row" onSubmit={reject}>
+          <label>
+            Reject reason
+            <textarea
+              required
+              rows={3}
+              placeholder={reviewing ? 'Why this result should not be sent' : 'Why this command should not run'}
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+            />
+          </label>
+          <button type="submit" className="danger" disabled={pending}>
+            Reject
+          </button>
+        </form>
       ) : null}
       {error ? <p className="error">{error}</p> : null}
-      {!waiting && !executing ? <DeleteCall id={call.id} onDeleted={onDecided} /> : null}
+      {!open ? <DeleteCall id={call.id} onDeleted={onDecided} /> : null}
     </article>
   )
 }
@@ -312,14 +354,17 @@ function CallBadges({ call }: { call: Approval }) {
 }
 
 function decisionBadge(call: Approval) {
-  if (call.status === 'approved' || call.status === 'cancelled') {
+  if (call.decision === 'approve') {
     return 'Approved'
   }
-  if (call.status === 'expired') {
+  if (call.decision === 'expire') {
     return 'Expired'
   }
-  if (call.status === 'rejected') {
+  if (call.decision === 'reject') {
     return 'Rejected'
+  }
+  if (call.decision === 'cancel') {
+    return 'Cancelled'
   }
   return ''
 }
@@ -347,17 +392,18 @@ function successResult(call: Approval) {
   return ''
 }
 
-function failureNote(call: Approval) {
-  if (call.status === 'rejected' && call.decisionReason) {
-    return { label: 'Reject reason', text: call.decisionReason }
+function callNotes(call: Approval) {
+  const notes: { label: string; text: string }[] = []
+  if (call.decision === 'reject' && call.decisionReason) {
+    notes.push({ label: 'Reject reason', text: call.decisionReason })
   }
-  if ((call.status === 'cancelled' || call.executionStatus === 'cancelled') && call.decisionReason) {
-    return { label: 'Cancel reason', text: call.decisionReason }
+  if (call.executionStatus === 'cancelled' && call.decisionReason && call.decision !== 'reject') {
+    notes.push({ label: 'Cancel reason', text: call.decisionReason })
   }
   if (call.executionStatus === 'error' && call.result) {
-    return { label: 'Error', text: call.result }
+    notes.push({ label: 'Error', text: call.result })
   }
-  return null
+  return notes
 }
 
 function DeleteCall({ id, onDeleted }: { id: number; onDeleted: () => void }) {

@@ -44,6 +44,7 @@ type Server struct {
 }
 
 type executionRun struct {
+	ctx    context.Context
 	cancel context.CancelFunc
 	byUser atomic.Bool
 	reason string
@@ -99,6 +100,10 @@ func New(port int, store *db.Store) (*Server, error) {
 			listener.Close()
 			return nil, err
 		}
+		if err := store.ExpireReviewToolCalls(context.Background(), restartReviewReason); err != nil {
+			listener.Close()
+			return nil, err
+		}
 	}
 
 	mux := http.NewServeMux()
@@ -119,6 +124,8 @@ func New(port int, store *db.Store) (*Server, error) {
 	mux.HandleFunc("GET /api/approvals/{id}", srv.requireSession(srv.handleGetApproval))
 	mux.HandleFunc("DELETE /api/approvals/{id}", srv.requireSession(srv.handleDeleteApproval))
 	mux.HandleFunc("POST /api/approvals/{id}/approve", srv.requireSession(srv.handleApprove))
+	mux.HandleFunc("POST /api/approvals/{id}/results", srv.requireSession(srv.handleSeeResults))
+	mux.HandleFunc("POST /api/approvals/{id}/send", srv.requireSession(srv.handleSendResults))
 	mux.HandleFunc("POST /api/approvals/{id}/reject", srv.requireSession(srv.handleReject))
 	mux.HandleFunc("POST /api/approvals/{id}/cancel", srv.requireSession(srv.handleCancel))
 	mux.HandleFunc("GET /api/health", srv.requireSession(srv.handleHealth))

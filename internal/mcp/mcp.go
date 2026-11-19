@@ -88,7 +88,7 @@ func OutputSchema() map[string]any {
 			"kind": map[string]any{
 				"type":        "string",
 				"enum":        []string{"tool_call_successful", "tool_call_error", "user_rejected", "approval_expired", "user_cancelled_mid_tool_call", "tool_call_timed_out"},
-				"description": "tool_call_successful when the command ran. tool_call_error when the command failed. user_rejected or approval_expired when the user did not let it run. user_cancelled_mid_tool_call when the user stopped a running command. tool_call_timed_out when the command ran longer than its limit.",
+				"description": "tool_call_successful when the command ran and the user shared the result. tool_call_error when the command failed and the user shared that failure. user_rejected when the user refused the command or refused to share its result. approval_expired when the request ended before the user decided. user_cancelled_mid_tool_call when the user stopped a running command. tool_call_timed_out when the command ran longer than its limit.",
 			},
 			"result": map[string]any{
 				"description": "Value returned by the command. Present only when ok is true.",

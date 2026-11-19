@@ -436,6 +436,240 @@ func TestCancelReturnsToTheQueue(t *testing.T) {
 	}
 }
 
+func TestSeeResultsSendAndReject(t *testing.T) {
+	store := openMCPStore(t)
+	if _, err := store.CreateResource(context.Background(), db.Resource{
+		Name: "local", Type: "mock", ConfigJSON: `{}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := startMCPServer(t, store)
+	client := unlockedClient(t, srv)
+	sealMockToken(t, srv, store, "local", "ok")
+	session := mcpSessionID(t, srv)
+
+	done := make(chan callOutcome, 1)
+	go func() {
+		done <- callMock(srv, session, "ping", "look first")
+	}()
+	waitPendingCommand(t, store, "ping")
+	pending, err := store.ListPendingToolCalls(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := strconv.FormatInt(pending[0].ID, 10)
+
+	earlySend, err := client.Post(srv.URL()+"/api/approvals/"+id+"/send", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	earlySend.Body.Close()
+	if earlySend.StatusCode != http.StatusConflict {
+		t.Fatalf("send before running = %d", earlySend.StatusCode)
+	}
+
+	saw, err := client.Post(srv.URL()+"/api/approvals/"+id+"/results", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held approvalView
+	if err := json.NewDecoder(saw.Body).Decode(&held); err != nil {
+		saw.Body.Close()
+		t.Fatal(err)
+	}
+	saw.Body.Close()
+	if saw.StatusCode != http.StatusOK || held.Status != db.ToolCallReview || held.Decision != "" || held.ExecutionStatus != db.ExecutionOK || held.Result != "true" {
+		t.Fatalf("held = %d %+v", saw.StatusCode, held)
+	}
+	select {
+	case early := <-done:
+		t.Fatalf("released before send: %+v %s", early, early.text)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	send, err := client.Post(srv.URL()+"/api/approvals/"+id+"/send", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	send.Body.Close()
+	if send.StatusCode != http.StatusOK {
+		t.Fatalf("send = %d", send.StatusCode)
+	}
+	sent := <-done
+	if sent.err != nil {
+		t.Fatal(sent.err)
+	}
+	got := decodeOutcome(t, sent.text)
+	if sent.isError || !got.OK || got.Kind != "tool_call_successful" || got.Result != true {
+		t.Fatalf("sent = %+v %s", got, sent.text)
+	}
+	stored, err := store.GetToolCall(context.Background(), pending[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Decision == nil || *stored.Decision != db.DecisionApprove || stored.Result == nil || *stored.Result != "true" {
+		t.Fatalf("stored send = %+v", stored)
+	}
+
+	go func() {
+		done <- callMock(srv, session, "ping", "look again")
+	}()
+	waitPendingCommand(t, store, "ping")
+	pending, err = store.ListPendingToolCalls(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id = strconv.FormatInt(pending[0].ID, 10)
+	saw, err = client.Post(srv.URL()+"/api/approvals/"+id+"/results", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	saw.Body.Close()
+	if saw.StatusCode != http.StatusOK {
+		t.Fatalf("second look = %d", saw.StatusCode)
+	}
+	empty, err := client.Post(srv.URL()+"/api/approvals/"+id+"/reject", "application/json", strings.NewReader(`{"reason":" "}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty.Body.Close()
+	if empty.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty reject = %d", empty.StatusCode)
+	}
+	reject, err := client.Post(srv.URL()+"/api/approvals/"+id+"/reject", "application/json", strings.NewReader(`{"reason":"do not share"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reject.Body.Close()
+	if reject.StatusCode != http.StatusOK {
+		t.Fatalf("reject = %d", reject.StatusCode)
+	}
+	hidden := <-done
+	if hidden.err != nil {
+		t.Fatal(hidden.err)
+	}
+	got = decodeOutcome(t, hidden.text)
+	if !hidden.isError || got.OK || got.Kind != "user_rejected" || got.Reason != "do not share" || got.Result != nil {
+		t.Fatalf("hidden = %+v %s", got, hidden.text)
+	}
+	stored, err = store.GetToolCall(context.Background(), pending[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != db.ToolCallRejected || stored.Decision == nil || *stored.Decision != db.DecisionReject || stored.DecisionReason == nil || *stored.DecisionReason != "do not share" || stored.ExecutionStatus == nil || *stored.ExecutionStatus != db.ExecutionOK || stored.Result == nil || *stored.Result != "true" {
+		t.Fatalf("stored reject = %+v", stored)
+	}
+}
+
+func TestSeeResultsCancelAndTimeout(t *testing.T) {
+	store := openMCPStore(t)
+	if _, err := store.CreateResource(context.Background(), db.Resource{
+		Name: "local", Type: "mock", ConfigJSON: `{}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := startMCPServer(t, store)
+	client := unlockedClient(t, srv)
+	sealMockToken(t, srv, store, "local", "ok")
+	session := mcpSessionID(t, srv)
+
+	done := make(chan callOutcome, 1)
+	go func() {
+		done <- callMock(srv, session, "loop", "stop this")
+	}()
+	waitPendingCommand(t, store, "loop")
+	pending, err := store.ListPendingToolCalls(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := pending[0].ID
+	path := strconv.FormatInt(id, 10)
+
+	started := make(chan int, 1)
+	go func() {
+		resp, err := client.Post(srv.URL()+"/api/approvals/"+path+"/results", "application/json", strings.NewReader(`{}`))
+		if err != nil {
+			started <- 0
+			return
+		}
+		resp.Body.Close()
+		started <- resp.StatusCode
+	}()
+	waitToolStatus(t, store, id, db.ToolCallExecuting)
+	cancel, err := client.Post(srv.URL()+"/api/approvals/"+path+"/cancel", "application/json", strings.NewReader(`{"reason":"stop this run"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stopped approvalView
+	if err := json.NewDecoder(cancel.Body).Decode(&stopped); err != nil {
+		cancel.Body.Close()
+		t.Fatal(err)
+	}
+	cancel.Body.Close()
+	if cancel.StatusCode != http.StatusOK || stopped.Status != db.ToolCallCancelled || stopped.Decision != "" || stopped.ExecutionStatus != db.ExecutionCancelled || stopped.Result != "" || stopped.DecisionReason != "stop this run" {
+		t.Fatalf("cancel = %d %+v", cancel.StatusCode, stopped)
+	}
+	if status := <-started; status != http.StatusOK {
+		t.Fatalf("results = %d", status)
+	}
+	outcome := <-done
+	if outcome.err != nil {
+		t.Fatal(outcome.err)
+	}
+	got := decodeOutcome(t, outcome.text)
+	if !outcome.isError || got.Kind != "user_cancelled_mid_tool_call" || got.Reason != "stop this run" {
+		t.Fatalf("cancel result = %+v %s", got, outcome.text)
+	}
+	stored, err := store.GetToolCall(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Decision != nil || stored.Result != nil || stored.ExecutionStatus == nil || *stored.ExecutionStatus != db.ExecutionCancelled {
+		t.Fatalf("stored cancel = %+v", stored)
+	}
+	if _, err := store.PutSetting(context.Background(), executionTimeoutKey, "1"); err != nil {
+		t.Fatal(err)
+	}
+
+	go func() {
+		done <- callMock(srv, session, "loop", "let it expire")
+	}()
+	waitPendingCommand(t, store, "loop")
+	pending, err = store.ListPendingToolCalls(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id = pending[0].ID
+	timed, err := client.Post(srv.URL()+"/api/approvals/"+strconv.FormatInt(id, 10)+"/results", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expired approvalView
+	if err := json.NewDecoder(timed.Body).Decode(&expired); err != nil {
+		timed.Body.Close()
+		t.Fatal(err)
+	}
+	timed.Body.Close()
+	if timed.StatusCode != http.StatusOK || expired.Status != db.ToolCallTimedOut || expired.Decision != "" || expired.ExecutionStatus != db.ExecutionTimeout || expired.Result != "" {
+		t.Fatalf("timeout = %d %+v", timed.StatusCode, expired)
+	}
+	outcome = <-done
+	if outcome.err != nil {
+		t.Fatal(outcome.err)
+	}
+	got = decodeOutcome(t, outcome.text)
+	if !outcome.isError || got.Kind != "tool_call_timed_out" || got.Error != "Execution timed out." {
+		t.Fatalf("timeout result = %+v %s", got, outcome.text)
+	}
+	stored, err = store.GetToolCall(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Decision != nil || stored.Result != nil || stored.Status != db.ToolCallTimedOut || stored.ExecutionStatus == nil || *stored.ExecutionStatus != db.ExecutionTimeout {
+		t.Fatalf("stored timeout = %+v", stored)
+	}
+}
+
 func TestExecutionTimeoutSettingAndResourceOverride(t *testing.T) {
 	store := openMCPStore(t)
 	srv := startMCPServer(t, store)
