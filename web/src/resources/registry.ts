@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { mockPlugin } from './mock.tsx'
 import { mongodbPlugin } from './mongodb.tsx'
 import { mysqlPlugin } from './mysql.tsx'
+import { postgresPlugin } from './postgres.tsx'
 import { redisPlugin } from './redis.tsx'
 
 export type ResourceValues = {
@@ -36,7 +37,7 @@ export function resultText(type: string, result: string) {
   return pluginFor(type)?.resultText(result) ?? result
 }
 
-export const resourcePlugins: ResourcePlugin[] = [mockPlugin, mysqlPlugin, mongodbPlugin, redisPlugin]
+export const resourcePlugins: ResourcePlugin[] = [mockPlugin, mysqlPlugin, postgresPlugin, mongodbPlugin, redisPlugin]
 
 export function pluginFor(type: string): ResourcePlugin | undefined {
   return resourcePlugins.find((item) => item.type === type)
