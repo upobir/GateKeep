@@ -34,6 +34,12 @@ export const mockPlugin = {
       </>
     )
   },
+  commandText(command: string) {
+    return command
+  },
+  resultText(result: string) {
+    return result
+  },
 }
 
 function Field({ label, value, masked }: { label: string; value: string; masked?: boolean }) {

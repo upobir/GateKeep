@@ -5,9 +5,10 @@ package builtin
 import (
 	"gatekeep/internal/plugin"
 	"gatekeep/internal/plugin/mock"
+	"gatekeep/internal/plugin/mongodb"
 	"gatekeep/internal/plugin/mysql"
 )
 
 func New() (*plugin.Registry, error) {
-	return plugin.New(mock.Plugin{}, mysql.Plugin{})
+	return plugin.New(mock.Plugin{}, mysql.Plugin{}, mongodb.Plugin{})
 }

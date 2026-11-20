@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import type { ResourceDetails, ResourceValues } from './registry.ts'
+import { indentJSON } from './text.ts'
 
 export const mysqlPlugin = {
   type: 'mysql',
@@ -62,6 +63,12 @@ export const mysqlPlugin = {
         </label>
       </>
     )
+  },
+  commandText(command: string) {
+    return command
+  },
+  resultText(result: string) {
+    return indentJSON(result)
   },
 }
 

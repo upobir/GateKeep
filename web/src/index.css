@@ -594,7 +594,10 @@ textarea {
 }
 
 .result-box {
+  max-height: 16rem;
+  overflow: auto;
   border: 1px solid var(--up);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .notice-box {

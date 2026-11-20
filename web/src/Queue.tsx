@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { errorMessage } from './auth.ts'
+import { commandText, resultText } from './resources/registry.ts'
 
 export type Approval = {
   id: number
   resourceName: string
+  resourceType?: string
   harnessName: string
   command: string
   reason: string
@@ -274,8 +276,8 @@ function ApprovalCard({
           <span>Why this command was sent</span>
           <strong>{call.reason}</strong>
         </div>
-        <p className="command">{call.command}</p>
-        {result ? <p className="result-box">{result}</p> : null}
+        <pre className="command">{commandText(call.resourceType ?? '', call.command)}</pre>
+        {result ? <pre className="result-box">{result}</pre> : null}
         {notes.map((note) => (
           <p className="notice-box" key={note.label}>
             <span>{note.label}</span>
@@ -387,7 +389,7 @@ function outcomeBadge(call: Approval) {
 
 function successResult(call: Approval) {
   if (call.executionStatus === 'ok' && call.result) {
-    return call.result
+    return resultText(call.resourceType ?? '', call.result)
   }
   return ''
 }

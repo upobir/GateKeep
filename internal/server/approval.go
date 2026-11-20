@@ -33,6 +33,7 @@ var errReasonRequired = errors.New("a rejection reason is required")
 type approvalView struct {
 	ID                      int64  `json:"id"`
 	ResourceName            string `json:"resourceName"`
+	ResourceType            string `json:"resourceType,omitempty"`
 	HarnessName             string `json:"harnessName"`
 	Command                 string `json:"command"`
 	Reason                  string `json:"reason"`
@@ -82,6 +83,12 @@ func (s *Server) presentApproval(ctx context.Context, call db.ToolCall) approval
 	view := approvalJSON(call)
 	if call.Status == db.ToolCallExecuting {
 		view.ExecutionTimeoutSeconds = int(s.callExecutionLimit(ctx, call) / time.Second)
+	}
+	if call.ResourceID != nil && s.store != nil {
+		resource, err := s.store.GetResource(ctx, *call.ResourceID)
+		if err == nil {
+			view.ResourceType = resource.Type
+		}
 	}
 	return view
 }
