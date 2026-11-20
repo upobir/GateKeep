@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write      # create the GitHub release
+  id-token: write      # sign the build attestation
+  attestations: write
+
+jobs:
+  macos:
+    # One Apple Silicon runner builds both arm64 and amd64 (cgo cross-compiles via clang -arch).
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Build DMGs
+        run: make release VERSION="$GITHUB_REF_NAME"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: bin/*.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            bin/*.dmg
+            bin/*-checksums.txt
+
+  # Add linux/windows jobs here later; each uploads an artifact and this job publishes them all.
+  publish:
+    needs: [macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes "**Which file?** Apple Silicon (M1 or newer): \`macos-arm64\`. Intel Mac: \`macos-amd64\`."
