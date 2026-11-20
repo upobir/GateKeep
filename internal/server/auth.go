@@ -61,6 +61,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setSessionCookie(w, session)
+	s.hub.Publish("auth", `{"state":"session"}`)
 	writeJSON(w, http.StatusOK, map[string]string{"state": "unlocked"})
 }
 
@@ -81,6 +82,7 @@ func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setSessionCookie(w, session)
+	s.hub.Publish("auth", `{"state":"session"}`)
 	writeJSON(w, http.StatusOK, map[string]string{"state": "unlocked"})
 }
 

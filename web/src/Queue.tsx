@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { errorMessage } from './auth.ts'
-import { commandText, resultText } from './resources/registry.ts'
+import { commandText, resourceLabel, resultText } from './resources/registry.ts'
 
 export type Approval = {
   id: number
@@ -260,7 +260,7 @@ function ApprovalCard({
     >
       <header className="approval-heading">
         <div>
-          <h2>{call.resourceName}</h2>
+          <h2>{resourceLabel(call.resourceType, call.resourceName)}</h2>
           <p className="muted">{call.harnessName}</p>
         </div>
         {waiting || executing ? (

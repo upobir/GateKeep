@@ -504,6 +504,81 @@ func TestPasswordChangeKeepsSecrets(t *testing.T) {
 	}
 }
 
+func TestSecondUnlockInvalidatesFirstSession(t *testing.T) {
+	store, err := db.Open(filepath.Join(t.TempDir(), "gatekeep.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	srv, err := New(0, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		srv.Shutdown(ctx)
+	})
+
+	firstJar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := &http.Client{Timeout: 5 * time.Second, Jar: firstJar}
+	setup, err := first.Post(srv.URL()+"/api/setup", "application/json", strings.NewReader(`{"password":"correct horse","confirm":"correct horse"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup.Body.Close()
+	if setup.StatusCode != http.StatusOK {
+		t.Fatalf("setup = %d", setup.StatusCode)
+	}
+
+	secondJar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := &http.Client{Timeout: 5 * time.Second, Jar: secondJar}
+	unlock, err := second.Post(srv.URL()+"/api/unlock", "application/json", strings.NewReader(`{"password":"correct horse"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock.Body.Close()
+	if unlock.StatusCode != http.StatusOK {
+		t.Fatalf("unlock = %d", unlock.StatusCode)
+	}
+
+	stale, err := first.Get(srv.URL() + "/api/auth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var staleAuth map[string]any
+	if err := json.NewDecoder(stale.Body).Decode(&staleAuth); err != nil {
+		stale.Body.Close()
+		t.Fatal(err)
+	}
+	stale.Body.Close()
+	if staleAuth["state"] != "locked" {
+		t.Fatalf("first session auth = %+v", staleAuth)
+	}
+
+	active, err := second.Get(srv.URL() + "/api/auth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var activeAuth map[string]any
+	if err := json.NewDecoder(active.Body).Decode(&activeAuth); err != nil {
+		active.Body.Close()
+		t.Fatal(err)
+	}
+	active.Body.Close()
+	if activeAuth["state"] != "unlocked" {
+		t.Fatalf("second session auth = %+v", activeAuth)
+	}
+}
+
 func TestNewRejectsInvalidPort(t *testing.T) {
 	if _, err := New(-1, nil); err == nil {
 		t.Fatal("expected error for negative port")

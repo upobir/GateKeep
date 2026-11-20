@@ -1,6 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { errorMessage, postJSON } from '../auth.ts'
-import { pluginFor, resourcePlugins, type ResourcePlugin } from './registry.ts'
+import { mysqlPlugin } from './mysql.tsx'
+import { pluginFor, resourceLabel, resourcePlugins, type ResourcePlugin } from './registry.ts'
+
+// Resource names are used in MCP tool enums and URLs; keep them simple in forms.
+const resourceNamePattern = /^[A-Za-z0-9_-]+$/
 
 type Resource = {
   id: number
@@ -85,7 +89,7 @@ export function Resources() {
       ) : null}
       {screen.mode === 'create' ? (
         <ResourceForm
-          plugin={resourcePlugins[0]}
+          plugin={mysqlPlugin}
           resource={null}
           onCancel={() => setScreen({ mode: 'list' })}
           onSaved={(saved) => {
@@ -97,17 +101,18 @@ export function Resources() {
       {screen.mode === 'list' ? (
         <>
           {resources.length === 0 ? <p>No resources yet.</p> : null}
-          <ul className="resource-list">
+          <div className="resource-list">
             {resources.map((resource) => (
-              <li key={resource.id} className="resource-row">
-                <span>{resource.name}</span>
-                <span className="status-value">{pluginFor(resource.type)?.label ?? resource.type}</span>
-                <button type="button" onClick={() => setScreen({ mode: 'view', resource })}>
-                  View
-                </button>
-              </li>
+              <button
+                key={resource.id}
+                type="button"
+                className="resource-card"
+                onClick={() => setScreen({ mode: 'view', resource })}
+              >
+                {resourceLabel(resource.type, resource.name)}
+              </button>
             ))}
-          </ul>
+          </div>
           <button type="button" className="primary" onClick={() => setScreen({ mode: 'create' })}>
             Add resource
           </button>
@@ -234,6 +239,10 @@ function ResourceForm({
     event.preventDefault()
     setMessage('')
     setError('')
+    if (!resourceNamePattern.test(name)) {
+      setError('Name may only use letters, digits, underscore, and hyphen.')
+      return
+    }
     const response = resource
       ? await fetch(`/api/resources/${resource.id}`, {
           method: 'PUT',
@@ -276,7 +285,18 @@ function ResourceForm({
       </label>
       <label>
         Name
-        <input value={name} required onChange={(event) => setName(event.target.value)} />
+        <input
+          value={name}
+          required
+          pattern="[A-Za-z0-9_-]+"
+          title="Letters, digits, underscore, and hyphen only."
+          onChange={(event) => {
+            const next = event.target.value
+            if (next === '' || /^[A-Za-z0-9_-]*$/.test(next)) {
+              setName(next)
+            }
+          }}
+        />
       </label>
       <Form
         config={config}

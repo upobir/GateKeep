@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import type { ResourceDetails, ResourceValues } from './registry.ts'
-import { indentJSON } from './text.ts'
+import { formatSQL, indentJSON } from './text.ts'
 
 export const postgresPlugin = {
   type: 'postgres',
@@ -65,7 +65,7 @@ export const postgresPlugin = {
     )
   },
   commandText(command: string) {
-    return command
+    return formatSQL(command, 'postgresql')
   },
   resultText(result: string) {
     return indentJSON(result)

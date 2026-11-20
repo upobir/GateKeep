@@ -37,8 +37,16 @@ export function resultText(type: string, result: string) {
   return pluginFor(type)?.resultText(result) ?? result
 }
 
-export const resourcePlugins: ResourcePlugin[] = [mockPlugin, mysqlPlugin, postgresPlugin, mongodbPlugin, redisPlugin]
+export const resourcePlugins: ResourcePlugin[] = [mysqlPlugin, postgresPlugin, mongodbPlugin, redisPlugin, mockPlugin]
 
 export function pluginFor(type: string): ResourcePlugin | undefined {
   return resourcePlugins.find((item) => item.type === type)
+}
+
+export function resourceLabel(type: string | undefined, name: string) {
+  if (!type) {
+    return name
+  }
+  const typeLabel = pluginFor(type)?.label ?? type
+  return `${typeLabel} / ${name}`
 }

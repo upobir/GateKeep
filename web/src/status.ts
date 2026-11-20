@@ -31,7 +31,7 @@ export function useLiveStatus(onLock: () => void): { status: LiveStatus; queueTi
     function onAuth(event: MessageEvent) {
       try {
         const body = JSON.parse(event.data) as { state?: string }
-        if (body.state === 'locked') {
+        if (body.state === 'locked' || body.state === 'session') {
           onLock()
         }
       } catch {
