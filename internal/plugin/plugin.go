@@ -8,9 +8,10 @@ import (
 // Field is one input a resource type collects.
 // Secret fields are encrypted and are never returned to the browser.
 type Field struct {
-	Name   string `json:"name"`
-	Label  string `json:"label"`
-	Secret bool   `json:"secret"`
+	Name     string `json:"name"`
+	Label    string `json:"label"`
+	Secret   bool   `json:"secret"`
+	Optional bool   `json:"optional"`
 }
 
 // Info is the public description of a resource type.

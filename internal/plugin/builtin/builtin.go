@@ -7,8 +7,9 @@ import (
 	"gatekeep/internal/plugin/mock"
 	"gatekeep/internal/plugin/mongodb"
 	"gatekeep/internal/plugin/mysql"
+	"gatekeep/internal/plugin/redis"
 )
 
 func New() (*plugin.Registry, error) {
-	return plugin.New(mock.Plugin{}, mysql.Plugin{}, mongodb.Plugin{})
+	return plugin.New(mock.Plugin{}, mysql.Plugin{}, mongodb.Plugin{}, redis.Plugin{})
 }

@@ -319,6 +319,9 @@ func (s *Server) collectFields(input resourceInput, existing *db.Resource) (map[
 				value = savedSecrets[field.Name]
 			}
 			if value == "" {
+				if field.Optional {
+					continue
+				}
 				return nil, nil, fmt.Errorf("%s is required", field.Label)
 			}
 			secrets[field.Name] = value
@@ -327,6 +330,9 @@ func (s *Server) collectFields(input resourceInput, existing *db.Resource) (map[
 		knownConfig[field.Name] = true
 		value := strings.TrimSpace(input.Config[field.Name])
 		if value == "" {
+			if field.Optional {
+				continue
+			}
 			return nil, nil, fmt.Errorf("%s is required", field.Label)
 		}
 		config[field.Name] = value
