@@ -56,6 +56,58 @@ func TestDriverConfig(t *testing.T) {
 	}
 }
 
+func TestDriverConfigTLS(t *testing.T) {
+	base := map[string]string{"host": "db.internal", "port": "3306", "database": "orders", "user": "reader"}
+	cases := map[string]string{"": "tls=false", "off": "tls=false", "on": "tls=true", "skip-verify": "tls=skip-verify"}
+	for mode, want := range cases {
+		config := map[string]string{"tls": mode}
+		for key, value := range base {
+			config[key] = value
+		}
+		cfg, err := driverConfig(config, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(cfg.FormatDSN(), want) {
+			t.Fatalf("tls %q = %s", mode, cfg.FormatDSN())
+		}
+	}
+	base["tls"] = "maybe"
+	if _, err := driverConfig(base, nil); err == nil {
+		t.Fatal("expected an unknown tls mode to fail")
+	}
+}
+
+// The MySQL 8 image makes a self-signed certificate, so skip-verify connects
+// over TLS and on refuses the certificate.
+func TestLiveMySQLTLS(t *testing.T) {
+	config := map[string]string{
+		"host":     env("GATEKEEP_MYSQL_HOST", "127.0.0.1"),
+		"port":     env("GATEKEEP_MYSQL_PORT", "3306"),
+		"database": env("GATEKEEP_MYSQL_DATABASE", "mysql"),
+		"user":     env("GATEKEEP_MYSQL_USER", "root"),
+	}
+	secrets := map[string]string{"password": env("GATEKEEP_MYSQL_PASSWORD", "example")}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := (Plugin{}).Test(ctx, config, secrets); err != nil {
+		t.Skipf("mysql is not available: %v", err)
+	}
+	config["tls"] = "skip-verify"
+	result, err := Plugin{}.Execute(context.Background(), "SHOW STATUS LIKE 'Ssl_cipher'", config, secrets, cache.New().Handle(1, time.Hour))
+	if err != nil {
+		t.Skipf("server has no TLS: %v", err)
+	}
+	rows := result.(map[string]any)["rows"].([][]any)
+	if len(rows) != 1 || rows[0][1] == "" {
+		t.Fatalf("not encrypted: %v", rows)
+	}
+	config["tls"] = "on"
+	if err := (Plugin{}).Test(context.Background(), config, secrets); err == nil {
+		t.Fatal("expected a self-signed certificate to be refused")
+	}
+}
+
 func TestExecuteRequiresCommand(t *testing.T) {
 	_, err := Plugin{}.Execute(context.Background(), "  ", nil, nil, cache.New().Handle(1, time.Hour))
 	if err == nil || err.Error() != "command is required" {

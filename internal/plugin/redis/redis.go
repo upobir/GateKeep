@@ -31,7 +31,7 @@ func (Plugin) Info() plugin.Info {
 			{Name: "user", Label: "User", Optional: true},
 			{Name: "password", Label: "Password", Secret: true, Optional: true},
 		},
-		ToolDescription: "Runs one Redis command. Cancel or timeout only closes this tool call's connection to Redis. Redis may keep doing heavy work on the server; there is no reliable server-side kill for most commands.",
+		ToolDescription:    "Runs one Redis command. Cancel or timeout only closes this tool call's connection to Redis. Redis may keep doing heavy work on the server; there is no reliable server-side kill for most commands.",
 		CommandDescription: "A JSON array of strings: the command name first, then each argument, for example [\"GET\",\"user:1001\"]. Same shape Redis uses on the wire. Avoid commands that can scan the whole keyspace or run long scripts.",
 	}
 }

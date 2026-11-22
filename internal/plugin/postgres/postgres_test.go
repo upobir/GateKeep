@@ -56,6 +56,31 @@ func TestDriverConfig(t *testing.T) {
 	}
 }
 
+func TestDriverConfigTLS(t *testing.T) {
+	base := map[string]string{"host": "db.internal", "port": "5432", "database": "orders", "user": "reader"}
+	cases := map[string]string{"": "sslmode=disable", "off": "sslmode=disable", "on": "sslmode=verify-full", "skip-verify": "sslmode=require"}
+	for mode, want := range cases {
+		config := map[string]string{"tls": mode}
+		for key, value := range base {
+			config[key] = value
+		}
+		cfg, err := driverConfig(config, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(cfg.ConnString(), want) {
+			t.Fatalf("tls %q = %s", mode, cfg.ConnString())
+		}
+		if (mode == "on" || mode == "skip-verify") != (cfg.TLSConfig != nil) {
+			t.Fatalf("tls %q config = %v", mode, cfg.TLSConfig)
+		}
+	}
+	base["tls"] = "maybe"
+	if _, err := driverConfig(base, nil); err == nil {
+		t.Fatal("expected an unknown tls mode to fail")
+	}
+}
+
 func TestExecuteRequiresCommand(t *testing.T) {
 	_, err := Plugin{}.Execute(context.Background(), "  ", nil, nil, cache.New().Handle(1, time.Hour))
 	if err == nil || err.Error() != "command is required" {

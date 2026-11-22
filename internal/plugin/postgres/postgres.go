@@ -35,6 +35,7 @@ func (Plugin) Info() plugin.Info {
 			{Name: "database", Label: "Database"},
 			{Name: "user", Label: "User"},
 			{Name: "password", Label: "Password", Secret: true},
+			{Name: "tls", Label: "TLS", Optional: true},
 		},
 		ToolDescription:    "Runs one PostgreSQL statement.",
 		CommandDescription: "One PostgreSQL statement. A statement that returns rows has the column names once and each row as an array.",
@@ -279,6 +280,13 @@ func openDB(config, secrets map[string]string) (*sql.DB, error) {
 	return db, nil
 }
 
+// sslModes maps a TLS mode to libpq's sslmode, which pgx reads.
+var sslModes = map[string]string{
+	"off":         "disable",
+	"on":          "verify-full",
+	"skip-verify": "require",
+}
+
 func driverConfig(config, secrets map[string]string) (*pgx.ConnConfig, error) {
 	host := strings.TrimSpace(config["host"])
 	if host == "" {
@@ -301,6 +309,10 @@ func driverConfig(config, secrets map[string]string) (*pgx.ConnConfig, error) {
 		return nil, errors.New("database is required")
 	}
 	password := secrets["password"]
+	mode, err := tlsMode(config)
+	if err != nil {
+		return nil, err
+	}
 	link := &url.URL{
 		Scheme: "postgres",
 		User:   url.UserPassword(user, password),
@@ -308,7 +320,7 @@ func driverConfig(config, secrets map[string]string) (*pgx.ConnConfig, error) {
 		Path:   "/" + database,
 	}
 	query := link.Query()
-	query.Set("sslmode", "disable")
+	query.Set("sslmode", sslModes[mode])
 	link.RawQuery = query.Encode()
 	cfg, err := pgx.ParseConfig(link.String())
 	if err != nil {
@@ -316,4 +328,17 @@ func driverConfig(config, secrets map[string]string) (*pgx.ConnConfig, error) {
 	}
 	cfg.ConnectTimeout = 10 * time.Second
 	return cfg, nil
+}
+
+// tlsMode reads the optional tls field. Empty means off, so resources saved
+// before this option existed connect the way they did.
+func tlsMode(config map[string]string) (string, error) {
+	switch mode := config["tls"]; mode {
+	case "", "off":
+		return "off", nil
+	case "on", "skip-verify":
+		return mode, nil
+	default:
+		return "", errors.New("tls must be off, on or skip-verify")
+	}
 }
