@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { ResourceDetails, ResourceValues } from './registry.ts'
 import { formatSQL, indentJSON } from './text.ts'
+import { TLSSelect, tlsLabel } from './tls.tsx'
 
 export const postgresPlugin = {
   type: 'postgres',
@@ -13,6 +14,7 @@ export const postgresPlugin = {
         <Field label="Database" value={config.database || '—'} />
         <Field label="User" value={config.user || '—'} />
         <Field label="Password" value={hasSecrets ? '••••••••' : 'Not set'} masked={hasSecrets} />
+        <Field label="TLS" value={tlsLabel(config.tls)} />
       </>
     )
   },
@@ -61,6 +63,7 @@ export const postgresPlugin = {
             onChange={(event) => onSecret('password', event.target.value)}
           />
         </label>
+        <TLSSelect value={config.tls} onChange={(value) => onConfig('tls', value)} />
       </>
     )
   },

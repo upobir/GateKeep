@@ -4,6 +4,7 @@ package clickhouse
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"database/sql"
 	"database/sql/driver"
 	"encoding/hex"
@@ -37,6 +38,7 @@ func (Plugin) Info() plugin.Info {
 			{Name: "database", Label: "Database"},
 			{Name: "user", Label: "User"},
 			{Name: "password", Label: "Password", Secret: true},
+			{Name: "tls", Label: "TLS", Optional: true},
 		},
 		ToolDescription:    "Runs one ClickHouse statement.",
 		CommandDescription: "One ClickHouse SQL statement. A statement that returns rows has the column names once and each row as an array.",
@@ -181,7 +183,8 @@ func poolKey(config, secrets map[string]string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.Join([]string{opts.Addr[0], opts.Auth.Database, opts.Auth.Username, opts.Auth.Password}, "\x00"), nil
+	mode, _ := tlsMode(config)
+	return strings.Join([]string{opts.Addr[0], opts.Auth.Database, opts.Auth.Username, opts.Auth.Password, mode}, "\x00"), nil
 }
 
 func keepAlive(cache plugin.Cache) func() {
@@ -299,7 +302,20 @@ func driverOptions(config, secrets map[string]string) (*clickhouse.Options, erro
 	if database == "" {
 		return nil, errors.New("database is required")
 	}
+	mode, err := tlsMode(config)
+	if err != nil {
+		return nil, err
+	}
+	// With TLS set the driver talks HTTPS. Go fills in the server name.
+	var tlsConfig *tls.Config
+	switch mode {
+	case "on":
+		tlsConfig = &tls.Config{}
+	case "skip-verify":
+		tlsConfig = &tls.Config{InsecureSkipVerify: true}
+	}
 	return &clickhouse.Options{
+		TLS:      tlsConfig,
 		Protocol: clickhouse.HTTP,
 		Addr:     []string{net.JoinHostPort(host, strconv.Itoa(number))},
 		Auth: clickhouse.Auth{
@@ -309,4 +325,17 @@ func driverOptions(config, secrets map[string]string) (*clickhouse.Options, erro
 		},
 		DialTimeout: 10 * time.Second,
 	}, nil
+}
+
+// tlsMode reads the optional tls field. Empty means off, so resources saved
+// before this option existed connect the way they did.
+func tlsMode(config map[string]string) (string, error) {
+	switch mode := config["tls"]; mode {
+	case "", "off":
+		return "off", nil
+	case "on", "skip-verify":
+		return mode, nil
+	default:
+		return "", errors.New("tls must be off, on or skip-verify")
+	}
 }

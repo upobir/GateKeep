@@ -32,6 +32,7 @@ func (Plugin) Info() plugin.Info {
 			{Name: "database", Label: "Database"},
 			{Name: "user", Label: "User"},
 			{Name: "password", Label: "Password", Secret: true},
+			{Name: "tls", Label: "TLS", Optional: true},
 		},
 		ToolDescription:    "Runs one MySQL statement.",
 		CommandDescription: "One MySQL statement. A statement that returns rows has the column names once and each row as an array.",
@@ -278,6 +279,12 @@ func openDB(config, secrets map[string]string) (*sql.DB, error) {
 	return db, nil
 }
 
+var tlsNames = map[string]string{
+	"off":         "false",
+	"on":          "true",
+	"skip-verify": "skip-verify",
+}
+
 func driverConfig(config, secrets map[string]string) (*mysql.Config, error) {
 	host := strings.TrimSpace(config["host"])
 	if host == "" {
@@ -299,6 +306,10 @@ func driverConfig(config, secrets map[string]string) (*mysql.Config, error) {
 	if database == "" {
 		return nil, errors.New("database is required")
 	}
+	mode, err := tlsMode(config)
+	if err != nil {
+		return nil, err
+	}
 	cfg := mysql.NewConfig()
 	cfg.User = user
 	cfg.Passwd = secrets["password"]
@@ -309,9 +320,24 @@ func driverConfig(config, secrets map[string]string) (*mysql.Config, error) {
 	cfg.Loc = time.UTC
 	cfg.Timeout = 10 * time.Second
 	cfg.CheckConnLiveness = true
+	// The driver's own tls names. It sets the server name for "true" itself.
+	cfg.TLSConfig = tlsNames[mode]
 	// Params would be sent as system variables. Charset is a connection option.
 	if err := cfg.Apply(mysql.Charset("utf8mb4", "")); err != nil {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// tlsMode reads the optional tls field. Empty means off, so resources saved
+// before this option existed connect the way they did.
+func tlsMode(config map[string]string) (string, error) {
+	switch mode := config["tls"]; mode {
+	case "", "off":
+		return "off", nil
+	case "on", "skip-verify":
+		return mode, nil
+	default:
+		return "", errors.New("tls must be off, on or skip-verify")
+	}
 }
