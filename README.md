@@ -11,6 +11,7 @@ GateKeep gives AI coding agents access to your production databases, with a huma
 **Resources**
 - MySQL
 - PostgreSQL
+- ClickHouse
 - MongoDB
 - Redis
 

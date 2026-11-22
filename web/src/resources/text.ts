@@ -8,7 +8,7 @@ export function indentJSON(text: string) {
   }
 }
 
-export function formatSQL(command: string, language: 'mysql' | 'postgresql') {
+export function formatSQL(command: string, language: 'mysql' | 'postgresql' | 'clickhouse') {
   const trimmed = command.trim()
   if (trimmed === '') {
     return command
