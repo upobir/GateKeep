@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { clickhousePlugin } from './clickhouse.tsx'
+import { httpPlugin } from './http.tsx'
 import { mockPlugin } from './mock.tsx'
 import { mongodbPlugin } from './mongodb.tsx'
 import { mysqlPlugin } from './mysql.tsx'
@@ -26,19 +27,19 @@ export type ResourcePlugin = {
   label: string
   View: (props: ResourceDetails) => ReactNode
   Form: (props: ResourceValues) => ReactNode
-  commandText: (command: string) => string
+  commandText: (command: string, config: Record<string, string>) => string
   resultText: (result: string) => string
 }
 
-export function commandText(type: string, command: string) {
-  return pluginFor(type)?.commandText(command) ?? command
+export function commandText(type: string, command: string, config: Record<string, string> = {}) {
+  return pluginFor(type)?.commandText(command, config) ?? command
 }
 
 export function resultText(type: string, result: string) {
   return pluginFor(type)?.resultText(result) ?? result
 }
 
-export const resourcePlugins: ResourcePlugin[] = [mysqlPlugin, postgresPlugin, clickhousePlugin, mongodbPlugin, redisPlugin, mockPlugin]
+export const resourcePlugins: ResourcePlugin[] = [mysqlPlugin, postgresPlugin, clickhousePlugin, mongodbPlugin, redisPlugin, httpPlugin, mockPlugin]
 
 export function pluginFor(type: string): ResourcePlugin | undefined {
   return resourcePlugins.find((item) => item.type === type)

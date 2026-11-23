@@ -31,21 +31,23 @@ const (
 var errReasonRequired = errors.New("a rejection reason is required")
 
 type approvalView struct {
-	ID                      int64  `json:"id"`
-	ResourceName            string `json:"resourceName"`
-	ResourceType            string `json:"resourceType,omitempty"`
-	HarnessName             string `json:"harnessName"`
-	Command                 string `json:"command"`
-	Reason                  string `json:"reason"`
-	Status                  string `json:"status"`
-	Decision                string `json:"decision,omitempty"`
-	DecisionReason          string `json:"decisionReason,omitempty"`
-	ExecutionStatus         string `json:"executionStatus,omitempty"`
-	ExecutionTimeoutSeconds int    `json:"executionTimeoutSeconds,omitempty"`
-	Result                  string `json:"result,omitempty"`
-	CreatedAt               string `json:"createdAt"`
-	DecidedAt               string `json:"decidedAt,omitempty"`
-	FinishedAt              string `json:"finishedAt,omitempty"`
+	ID           int64  `json:"id"`
+	ResourceName string `json:"resourceName"`
+	ResourceType string `json:"resourceType,omitempty"`
+	// ResourceConfig is the resource's non-secret settings, for showing the command.
+	ResourceConfig          map[string]string `json:"resourceConfig,omitempty"`
+	HarnessName             string            `json:"harnessName"`
+	Command                 string            `json:"command"`
+	Reason                  string            `json:"reason"`
+	Status                  string            `json:"status"`
+	Decision                string            `json:"decision,omitempty"`
+	DecisionReason          string            `json:"decisionReason,omitempty"`
+	ExecutionStatus         string            `json:"executionStatus,omitempty"`
+	ExecutionTimeoutSeconds int               `json:"executionTimeoutSeconds,omitempty"`
+	Result                  string            `json:"result,omitempty"`
+	CreatedAt               string            `json:"createdAt"`
+	DecidedAt               string            `json:"decidedAt,omitempty"`
+	FinishedAt              string            `json:"finishedAt,omitempty"`
 }
 
 func approvalJSON(call db.ToolCall) approvalView {
@@ -88,6 +90,10 @@ func (s *Server) presentApproval(ctx context.Context, call db.ToolCall) approval
 		resource, err := s.store.GetResource(ctx, *call.ResourceID)
 		if err == nil {
 			view.ResourceType = resource.Type
+			config := map[string]string{}
+			if json.Unmarshal([]byte(resource.ConfigJSON), &config) == nil {
+				view.ResourceConfig = config
+			}
 		}
 	}
 	return view
