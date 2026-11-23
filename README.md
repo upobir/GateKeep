@@ -30,6 +30,8 @@ GateKeep gives AI coding agents access to your production databases, with a huma
 
 GateKeep lives in the menu bar. Click its icon to open the web UI at <http://127.0.0.1:8765>.
 
+To check the installed version, open GateKeep's system tray menu or look beneath **GateKeep** in the web UI sidebar.
+
 ### Verify the download (optional)
 
 Releases are built by GitHub Actions from this repo. To confirm a DMG came from that build:
@@ -55,5 +57,5 @@ Requires Go, Node 22.12+, and Xcode Command Line Tools.
 ```bash
 make install         # build and install to ~/Applications
 make dmg             # DMG for this Mac
-make release         # DMGs for Apple Silicon and Intel
+make release RELEASE_VERSION=v0.2.1  # DMGs from that exact tag; requires a clean checkout
 ```

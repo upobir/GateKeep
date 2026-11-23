@@ -117,6 +117,7 @@ func New(port int, store *db.Store) (*Server, error) {
 	}
 
 	mux := http.NewServeMux()
+ mux.HandleFunc("GET /api/version", srv.handleVersion)
 	mux.HandleFunc("GET /api/auth", srv.handleAuth)
 	mux.HandleFunc("POST /api/setup", srv.handleSetup)
 	mux.HandleFunc("POST /api/unlock", srv.handleUnlock)

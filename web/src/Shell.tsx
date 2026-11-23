@@ -62,7 +62,7 @@ export function Shell({ auth, onChange }: { auth: AuthInfo; onChange: () => void
   return (
     <div className="shell">
       <aside className="sidebar">
-        <p className="brand">GateKeep</p>
+        <div className="brand">GateKeep<BuildVersion /></div>
         <nav className="nav" aria-label="Application">
           {pages.map((item) => (
             <button
@@ -139,4 +139,20 @@ function StatusRow({ label, value }: { label: string; value: string }) {
       <span className="status-value">{value}</span>
     </p>
   )
+}
+
+function BuildVersion() {
+  const [build, setBuild] = useState<{ version: string; commit: string } | null>(null)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetch('/api/version', { signal: controller.signal, cache: 'no-store' })
+      .then(async (response) => {
+        if (response.ok) setBuild(await response.json())
+      })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [])
+
+  return build ? <small className="build-version" title={`Commit ${build.commit}`}>{build.version}</small> : null
 }

@@ -19,8 +19,7 @@ const (
 	// client asks for a legacy version this server does not implement.
 	PreferredLegacy = "2025-11-25"
 
-	ServerName    = "GateKeep"
-	ServerVersion = "0.1.0"
+	ServerName = "GateKeep"
 
 	CodeParseError         = -32700
 	CodeInvalidRequest     = -32600

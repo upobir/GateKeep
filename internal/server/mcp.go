@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"gatekeep/internal/buildinfo"
 	"gatekeep/internal/db"
 	"gatekeep/internal/mcp"
 )
@@ -167,7 +168,7 @@ func (s *Server) handleModernMCP(w http.ResponseWriter, r *http.Request, req rpc
 			"_meta": map[string]any{
 				"io.modelcontextprotocol/serverInfo": map[string]any{
 					"name":    mcp.ServerName,
-					"version": mcp.ServerVersion,
+					"version": buildinfo.Version,
 				},
 			},
 		})
@@ -249,7 +250,7 @@ func (s *Server) mcpInitialize(w http.ResponseWriter, req rpcRequest) {
 		"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 		"serverInfo": map[string]any{
 			"name":    mcp.ServerName,
-			"version": mcp.ServerVersion,
+			"version": buildinfo.Version,
 		},
 		"instructions": s.instructions(context.Background()),
 	})

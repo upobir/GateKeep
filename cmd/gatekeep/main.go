@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"gatekeep/internal/buildinfo"
 	"gatekeep/internal/db"
 	"gatekeep/internal/notify"
 	"gatekeep/internal/server"
@@ -19,7 +21,12 @@ import (
 func main() {
 	portFlag := flag.Int("port", 0, "listen port on 127.0.0.1; omit to use the saved port")
 	dbFlag := flag.String("db", "", "sqlite database path")
+	versionFlag := flag.Bool("version", false, "print build version and exit")
 	flag.Parse()
+	if *versionFlag {
+		fmt.Printf("GateKeep %s (%s)\n", buildinfo.Version, buildinfo.Commit)
+		return
+	}
 	portExplicit := false
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "port" {

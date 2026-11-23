@@ -68,6 +68,15 @@ body {
   font-weight: 650;
 }
 
+.build-version {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .nav {
   display: flex;
   flex-direction: column;

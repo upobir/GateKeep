@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"runtime"
 
+	"gatekeep/internal/buildinfo"
 	"gatekeep/internal/icon"
 	"gatekeep/internal/notify"
 	"gatekeep/internal/startup"
@@ -36,7 +37,10 @@ func onReady(opts Options) {
 		log.Fatalf("icon: %v", err)
 	}
 	systray.SetIcon(png)
-	systray.SetTooltip("GateKeep")
+	systray.SetTooltip("GateKeep " + buildinfo.Version)
+	versionItem := systray.AddMenuItem("GateKeep "+buildinfo.Version, "Commit "+buildinfo.Commit)
+	versionItem.Disable()
+	systray.AddSeparator()
 
 	openItem := systray.AddMenuItem("Open UI", "Open GateKeep in the browser")
 	loginItem := systray.AddMenuItemCheckbox("Start at Login", "Open GateKeep when you log in", startup.Enabled())

@@ -1,9 +1,15 @@
 .PHONY: build app frontend run install uninstall dmg package release clean
 
-# Version comes from the latest v* tag (CI passes VERSION=$GITHUB_REF_NAME).
-VERSION ?= $(shell git describe --tags --match 'v*' 2>/dev/null || echo v0.0.0-dev)
-# Info.plist wants a plain dotted number: v1.2.3-4-gabc -> 1.2.3
-PLIST_VERSION = $(firstword $(subst -, ,$(patsubst v%,%,$(VERSION))))
+# Local builds always carry a development label, even when HEAD is tagged.
+BUILD_MODE ?= dev
+ifeq ($(BUILD_MODE),release)
+override VERSION := $(RELEASE_VERSION)
+PLIST_VERSION = $(patsubst v%,%,$(VERSION))
+else
+override VERSION := $(shell bash scripts/version.sh dev)
+PLIST_VERSION = 0.0.0
+endif
+COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 
 # Target architecture: arm64 (Apple Silicon) or amd64 (Intel). Defaults to this Mac.
 GOARCH ?= $(shell go env GOARCH)
@@ -24,9 +30,12 @@ build: frontend app
 
 # App bundle only; assumes the frontend is already built.
 app:
+	@bash scripts/version.sh "$(BUILD_MODE)" "$(RELEASE_VERSION)" >/dev/null
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources $(ICONSET)
+	# Keep linker flags in Go build metadata so cross-architecture versions can be verified.
 	CGO_ENABLED=1 GOOS=darwin GOARCH=$(GOARCH) CC="clang -arch $(CLANG_ARCH_$(GOARCH))" \
-		go build -trimpath -o $(BIN) ./cmd/gatekeep
+		go build -ldflags "-X gatekeep/internal/buildinfo.Version=$(VERSION) -X gatekeep/internal/buildinfo.Commit=$(COMMIT)" -o $(BIN) ./cmd/gatekeep
+	@bash scripts/verify-version.sh "$(BIN)" "$(VERSION)" "$(COMMIT)"
 	go run ./internal/icon/mkicon.go -o $(ICONSET)
 	iconutil -c icns $(ICONSET) -o $(APP)/Contents/Resources/AppIcon.icns
 	rm -rf $(ICONSET)
@@ -52,9 +61,11 @@ package: app
 dmg: frontend package
 
 # DMGs for every release arch, plus a checksum file.
-release: frontend
-	@for arch in $(RELEASE_ARCHES); do $(MAKE) package GOARCH=$$arch VERSION=$(VERSION) || exit 1; done
-	cd bin && shasum -a 256 GateKeep-$(VERSION)-*.dmg > GateKeep-$(VERSION)-checksums.txt
+release:
+	@bash scripts/version.sh release "$(RELEASE_VERSION)" >/dev/null
+	$(MAKE) frontend
+	@for arch in $(RELEASE_ARCHES); do $(MAKE) package GOARCH=$$arch BUILD_MODE=release RELEASE_VERSION="$(RELEASE_VERSION)" || exit 1; done
+	cd bin && shasum -a 256 GateKeep-$(RELEASE_VERSION)-*.dmg > GateKeep-$(RELEASE_VERSION)-checksums.txt
 
 frontend:
 	@set -e; \
