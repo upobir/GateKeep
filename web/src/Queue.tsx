@@ -6,6 +6,7 @@ export type Approval = {
   id: number
   resourceName: string
   resourceType?: string
+  resourceConfig?: Record<string, string>
   harnessName: string
   command: string
   reason: string
@@ -276,7 +277,7 @@ function ApprovalCard({
           <span>Why this command was sent</span>
           <strong>{call.reason}</strong>
         </div>
-        <pre className="command">{commandText(call.resourceType ?? '', call.command)}</pre>
+        <pre className="command">{commandText(call.resourceType ?? '', call.command, call.resourceConfig)}</pre>
         {result ? <pre className="result-box">{result}</pre> : null}
         {notes.map((note) => (
           <p className="notice-box" key={note.label}>
