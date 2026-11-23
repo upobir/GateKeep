@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { ResourceDetails, ResourceValues } from './registry.ts'
 import { indentJSON } from './text.ts'
+import { TLSSelect, tlsLabel } from './tls.tsx'
 
 function argvLine(command: string) {
   try {
@@ -35,6 +36,7 @@ export const redisPlugin = {
         <Field label="Database" value={config.database ?? '0'} />
         <Field label="User" value={config.user || '—'} />
         <Field label="Password" value={hasSecrets ? '••••••••' : 'Not set'} masked={hasSecrets} />
+        <Field label="TLS" value={tlsLabel(config.tls)} />
       </>
     )
   },
@@ -90,6 +92,7 @@ export const redisPlugin = {
             onChange={(event) => onSecret('password', event.target.value)}
           />
         </label>
+        <TLSSelect value={config.tls} onChange={(value) => onConfig('tls', value)} />
       </>
     )
   },

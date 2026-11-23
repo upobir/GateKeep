@@ -3,6 +3,7 @@ package mongodb
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -36,6 +37,7 @@ func (Plugin) Info() plugin.Info {
 			{Name: "user", Label: "User"},
 			{Name: "authDatabase", Label: "Auth database"},
 			{Name: "password", Label: "Password", Secret: true},
+			{Name: "tls", Label: "TLS", Optional: true},
 		},
 		ToolDescription:    "Runs one MongoDB command.",
 		CommandDescription: "One MongoDB command document as extended JSON, run on the resource database. The first field is the command name, for example {\"find\":\"orders\",\"filter\":{\"status\":\"open\"},\"limit\":20}. A command that returns a cursor comes back as its documents.",
@@ -90,6 +92,7 @@ func (Plugin) Execute(ctx context.Context, command string, config, secrets map[s
 }
 
 type connConfig struct {
+	tlsMode      string
 	host         string
 	port         string
 	database     string
@@ -128,7 +131,12 @@ func connSettings(config, secrets map[string]string) (connConfig, error) {
 	if secrets != nil {
 		password = secrets["password"]
 	}
+	mode, err := tlsMode(config)
+	if err != nil {
+		return connConfig{}, err
+	}
 	return connConfig{
+		tlsMode:      mode,
 		host:         host,
 		port:         strconv.Itoa(number),
 		database:     database,
@@ -140,7 +148,7 @@ func connSettings(config, secrets map[string]string) (connConfig, error) {
 }
 
 func (cfg connConfig) key() string {
-	return strings.Join([]string{cfg.addr, cfg.database, cfg.user, cfg.authDatabase, cfg.password}, "\x00")
+	return strings.Join([]string{cfg.addr, cfg.database, cfg.user, cfg.authDatabase, cfg.password, cfg.tlsMode}, "\x00")
 }
 
 // cachedClient is one resource's client. key is the connection it was opened
@@ -279,9 +287,21 @@ func broken(err error) bool {
 }
 
 func openClient(cfg connConfig) (*mongo.Client, error) {
+	return mongo.Connect(driverOptions(cfg))
+}
+
+func driverOptions(cfg connConfig) *options.ClientOptions {
+	var tlsConfig *tls.Config
+	switch cfg.tlsMode {
+	case "on":
+		tlsConfig = &tls.Config{}
+	case "skip-verify":
+		tlsConfig = &tls.Config{InsecureSkipVerify: true}
+	}
 	// One configured host is the server to use. Direct skips replica-set discovery.
 	// The pool stays small. Cancellation uses a second connection for killOp.
-	return mongo.Connect(options.Client().
+	return options.Client().
+		SetTLSConfig(tlsConfig).
 		SetHosts([]string{cfg.addr}).
 		SetDirect(true).
 		SetAuth(options.Credential{
@@ -294,7 +314,7 @@ func openClient(cfg connConfig) (*mongo.Client, error) {
 		SetServerSelectionTimeout(10 * time.Second).
 		SetMaxPoolSize(4).
 		SetAppName("gatekeep").
-		SetMonitor(commandMonitor))
+		SetMonitor(commandMonitor)
 }
 
 func clean(err error, secret string) error {
@@ -382,5 +402,18 @@ func killConnection(client *mongo.Client, connID int64) {
 			{Key: "killOp", Value: int32(1)},
 			{Key: "op", Value: number},
 		})
+	}
+}
+
+// tlsMode reads the optional tls field. Empty means off, so resources saved
+// before this option existed connect the way they did.
+func tlsMode(config map[string]string) (string, error) {
+	switch mode := config["tls"]; mode {
+	case "", "off":
+		return "off", nil
+	case "on", "skip-verify":
+		return mode, nil
+	default:
+		return "", errors.New("tls must be off, on or skip-verify")
 	}
 }

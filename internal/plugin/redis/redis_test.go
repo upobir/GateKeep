@@ -143,3 +143,34 @@ func TestParseCommandRequiresJSON(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestConnectionTLS(t *testing.T) {
+	config := map[string]string{"host": "cache.internal"}
+	keys := make(map[string]string)
+	for _, mode := range []string{"", "off", "on", "skip-verify"} {
+		config["tls"] = mode
+		cfg, err := connSettings(config, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		options := driverOptions(cfg)
+		encrypted := mode == "on" || mode == "skip-verify"
+		if encrypted != (options.TLSConfig != nil) {
+			t.Fatalf("tls %q: expected encryption %v, config = %+v", mode, encrypted, options.TLSConfig)
+		}
+		if options.TLSConfig != nil && options.TLSConfig.InsecureSkipVerify != (mode == "skip-verify") {
+			t.Fatalf("tls %q: wrong certificate verification setting", mode)
+		}
+		keys[mode] = cfg.key()
+	}
+	if keys[""] != keys["off"] {
+		t.Fatal("existing resources must retain TLS-off connection identity")
+	}
+	if keys["off"] == keys["on"] || keys["on"] == keys["skip-verify"] || keys["off"] == keys["skip-verify"] {
+		t.Fatal("changing TLS mode must replace the cached connection")
+	}
+	config["tls"] = "maybe"
+	if _, err := connSettings(config, nil); err == nil {
+		t.Fatal("expected unknown TLS mode to fail")
+	}
+}
