@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { ResourceDetails, ResourceValues } from './registry.ts'
 import { indentJSON } from './text.ts'
+import { TLSSelect, tlsLabel } from './tls.tsx'
 
 export const mongodbPlugin = {
   type: 'mongodb',
@@ -14,6 +15,7 @@ export const mongodbPlugin = {
         <Field label="User" value={config.user || '—'} />
         <Field label="Auth database" value={config.authDatabase || 'admin'} />
         <Field label="Password" value={hasSecrets ? '••••••••' : 'Not set'} masked={hasSecrets} />
+        <Field label="TLS" value={tlsLabel(config.tls)} />
       </>
     )
   },
@@ -75,6 +77,7 @@ export const mongodbPlugin = {
             onChange={(event) => onSecret('password', event.target.value)}
           />
         </label>
+        <TLSSelect value={config.tls} onChange={(value) => onConfig('tls', value)} />
       </>
     )
   },

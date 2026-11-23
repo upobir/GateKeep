@@ -3,6 +3,7 @@ package redis
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -30,6 +31,7 @@ func (Plugin) Info() plugin.Info {
 			{Name: "database", Label: "Database"},
 			{Name: "user", Label: "User", Optional: true},
 			{Name: "password", Label: "Password", Secret: true, Optional: true},
+			{Name: "tls", Label: "TLS", Optional: true},
 		},
 		ToolDescription:    "Runs one Redis command. Cancel or timeout only closes this tool call's connection to Redis. Redis may keep doing heavy work on the server; there is no reliable server-side kill for most commands.",
 		CommandDescription: "A JSON array of strings: the command name first, then each argument, for example [\"GET\",\"user:1001\"]. Same shape Redis uses on the wire. Avoid commands that can scan the whole keyspace or run long scripts.",
@@ -85,6 +87,7 @@ func (Plugin) Execute(ctx context.Context, command string, config, secrets map[s
 }
 
 type connConfig struct {
+	tlsMode  string
 	host     string
 	port     string
 	database int
@@ -119,7 +122,12 @@ func connSettings(config, secrets map[string]string) (connConfig, error) {
 	if secrets != nil {
 		password = secrets["password"]
 	}
+	mode, err := tlsMode(config)
+	if err != nil {
+		return connConfig{}, err
+	}
 	return connConfig{
+		tlsMode:  mode,
 		host:     host,
 		port:     strconv.Itoa(number),
 		database: database,
@@ -130,7 +138,7 @@ func connSettings(config, secrets map[string]string) (connConfig, error) {
 }
 
 func (cfg connConfig) key() string {
-	return strings.Join([]string{cfg.addr, strconv.Itoa(cfg.database), cfg.user, cfg.password}, "\x00")
+	return strings.Join([]string{cfg.addr, strconv.Itoa(cfg.database), cfg.user, cfg.password, cfg.tlsMode}, "\x00")
 }
 
 type cachedClient struct {
@@ -252,6 +260,10 @@ func broken(err error) bool {
 }
 
 func openClient(cfg connConfig) (*goredis.Client, error) {
+	return goredis.NewClient(driverOptions(cfg)), nil
+}
+
+func driverOptions(cfg connConfig) *goredis.Options {
 	options := &goredis.Options{
 		Addr:         cfg.addr,
 		DB:           cfg.database,
@@ -265,7 +277,13 @@ func openClient(cfg connConfig) (*goredis.Client, error) {
 	if cfg.user != "" {
 		options.Username = cfg.user
 	}
-	return goredis.NewClient(options), nil
+	switch cfg.tlsMode {
+	case "on":
+		options.TLSConfig = &tls.Config{}
+	case "skip-verify":
+		options.TLSConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	return options
 }
 
 func clean(err error, secret string) error {
@@ -273,4 +291,17 @@ func clean(err error, secret string) error {
 		return err
 	}
 	return errors.New(strings.ReplaceAll(err.Error(), secret, "*****"))
+}
+
+// tlsMode reads the optional tls field. Empty means off, so resources saved
+// before this option existed connect the way they did.
+func tlsMode(config map[string]string) (string, error) {
+	switch mode := config["tls"]; mode {
+	case "", "off":
+		return "off", nil
+	case "on", "skip-verify":
+		return mode, nil
+	default:
+		return "", errors.New("tls must be off, on or skip-verify")
+	}
 }

@@ -1,4 +1,4 @@
-// TLS modes match tlsMode in the MySQL, Postgres and ClickHouse plugins. A resource saved before this
+// TLS modes match tlsMode in the database plugins. A resource saved before this
 // option existed has no tls value, which means off.
 const modes = [
   { value: 'off', label: 'Off' },
