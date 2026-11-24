@@ -70,10 +70,9 @@ set -eu
 [ -z "$AWS_PAGER" ]
 [ "$AWS_CLI_AUTO_PROMPT" = off ]
 [ "$AWS_DEFAULT_OUTPUT" = json ]
-[ "$#" = 5 ]
+[ "$#" = 3 ]
 [ "$1" = sts ] && [ "$2" = get-caller-identity ]
 [ "$3" = 'literal; $(echo should-not-run)' ]
-[ "$4" = --color ] && [ "$5" = off ]
 printf '{"Account":"123456789012","Nested":["%s"],"%s":"masked","Number":1234567890123456789}' "$AWS_SECRET_ACCESS_KEY" "$AWS_ACCESS_KEY_ID"
 `)
 	result, err := (Plugin{}).Execute(context.Background(), `["sts","get-caller-identity","literal; $(echo should-not-run)"]`, map[string]string{"region": "us-east-1"}, credentials(), nil)

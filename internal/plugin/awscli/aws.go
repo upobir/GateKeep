@@ -26,8 +26,8 @@ func (Plugin) Info() plugin.Info {
 			{Name: "sessionToken", Label: "Session token", Secret: true, Optional: true},
 			{Name: "region", Label: "Region", Optional: true},
 		},
-		ToolDescription:    "Runs the installed AWS CLI using this resource's saved credentials. GateKeep automatically appends --color off and disables the pager and interactive prompts. Do not supply --color, --no-cli-pager, --cli-auto-prompt or --no-cli-auto-prompt; these settings are already managed by GateKeep. Output defaults to JSON; --output can override it. Non-JSON output is returned as text. Never include credentials in commands. Local AWS profiles are not used.",
-		CommandDescription: `A JSON array of AWS CLI arguments, for example ["sts","get-caller-identity"] or ["ec2","describe-instances","--region","us-east-1"]. Omit the aws executable. GateKeep adds --color off, sets AWS_PAGER="" and AWS_CLI_AUTO_PROMPT=off, and defaults AWS_DEFAULT_OUTPUT=json. Do not include --color, --no-cli-pager, --cli-auto-prompt or --no-cli-auto-prompt. Authentication is managed by GateKeep; do not include --profile or credentials. --output is allowed when a different format is needed. Interactive login, configuration and credential-issuing commands are not supported.`,
+		ToolDescription:    "Runs the installed AWS CLI using this resource's saved credentials. GateKeep disables the pager and interactive prompts. Do not supply --color, --no-cli-pager, --cli-auto-prompt or --no-cli-auto-prompt. Output defaults to JSON; --output can override it. Non-JSON output is returned as text. Never include credentials in commands. Local AWS profiles are not used.",
+		CommandDescription: `A JSON array of AWS CLI arguments, for example ["sts","get-caller-identity"] or ["ec2","describe-instances","--region","us-east-1"]. Omit the aws executable. GateKeep sets AWS_PAGER="" and AWS_CLI_AUTO_PROMPT=off, and defaults AWS_DEFAULT_OUTPUT=json. Do not supply --color, --no-cli-pager, --cli-auto-prompt or --no-cli-auto-prompt. Authentication is managed by GateKeep; do not include --profile or credentials. --output is allowed when a different format is needed. Interactive login, configuration and credential-issuing commands are not supported.`,
 	}
 }
 
@@ -56,9 +56,6 @@ func (p Plugin) Execute(ctx context.Context, command string, config, secrets map
 	if err := p.Available(); err != nil {
 		return nil, err
 	}
-	// Explicit arguments work with CLI v1 as well as v2. Environment variables
-	// disable v2 pager and auto-prompt without passing unsupported v1 flags.
-	args = append(args, "--color", "off")
 	cmd := exec.CommandContext(ctx, "aws", args...)
 	cmd.Env = environment(os.Environ(), config, secrets)
 	cmd.WaitDelay = time.Second
@@ -112,7 +109,7 @@ func parseCommand(command string) ([]string, error) {
 		}
 		flag, _, _ := strings.Cut(arg, "=")
 		// The CLI accepts abbreviated options; reject those forms as well.
-		for _, blocked := range []string{"--profile", "--color", "--debug", "--endpoint-url", "--no-sign-request", "--no-verify-ssl", "--cli-auto-prompt", "--no-cli-auto-prompt", "--cli-pager", "--no-cli-pager"} {
+		for _, blocked := range []string{"--profile", "--debug", "--endpoint-url", "--no-sign-request", "--no-verify-ssl", "--cli-auto-prompt", "--no-cli-auto-prompt", "--cli-pager", "--no-cli-pager"} {
 			if flag == "--" || strings.HasPrefix(blocked, flag) {
 				return nil, fmt.Errorf("%s is managed by GateKeep and cannot be supplied", flag)
 			}

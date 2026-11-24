@@ -33,12 +33,28 @@ export const awsCliPlugin = {
   commandText(command: string) {
     try {
       const args: unknown = JSON.parse(command)
-      if (Array.isArray(args) && args.every((arg) => typeof arg === 'string')) {
-        return 'aws ' + args.map((arg: string) => /^[A-Za-z0-9_./:=@,-]+$/.test(arg) ? arg : JSON.stringify(arg)).join(' ')
-          + ' --color off'
+      if (Array.isArray(args) && args.length >= 2 && args.every((arg) => typeof arg === 'string')) {
+        const lines: string[][] = [['aws']]
+        for (const arg of args) {
+          if (arg.startsWith('--')) {
+            lines.push([])
+          }
+          lines[lines.length - 1].push(quoteArgument(arg))
+        }
+        return lines.map((line, index) => (index === 0 ? '' : '  ') + line.join(' ')).join(' \\\n')
       }
     } catch { /* Show malformed commands verbatim for review. */ }
     return command
   },
   resultText: indentJSON,
+}
+
+function quoteArgument(arg: string): string {
+  if (/^[A-Za-z0-9_./:=@,-]+$/.test(arg)) {
+    return arg
+  }
+  if (arg.includes("'")) {
+    return '"' + arg.replace(/["\\$`]/g, '\\$&') + '"'
+  }
+  return "'" + arg + "'"
 }
