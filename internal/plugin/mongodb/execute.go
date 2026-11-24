@@ -4,13 +4,15 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 type command struct {
-	doc bson.D
+	doc          bson.D
+	hasMaxTimeMS bool
 }
 
 func parseCommand(text string) (command, error) {
@@ -22,13 +24,37 @@ func parseCommand(text string) (command, error) {
 	if err := bson.UnmarshalExtJSON([]byte(text), false, &doc); err != nil || len(doc) == 0 {
 		return command{}, errors.New("command must be a JSON document")
 	}
-	return command{doc: doc}, nil
+	hasMaxTimeMS := false
+	for _, field := range doc {
+		if field.Key == "maxTimeMS" {
+			if hasMaxTimeMS {
+				return command{}, errors.New("command must not contain duplicate maxTimeMS fields")
+			}
+			hasMaxTimeMS = true
+		}
+	}
+	return command{doc: doc, hasMaxTimeMS: hasMaxTimeMS}, nil
 }
 
+// commandContext hides the deadline from the driver's automatic maxTimeMS
+// calculation when we supply an explicit server limit. Done, Err and Value
+// still delegate to the original context, preserving Gatekeep cancellation.
+type commandContext struct{ context.Context }
+
+func (commandContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+
 func (cmd command) run(ctx context.Context, client *mongo.Client, cfg connConfig) (any, error) {
+	doc := cmd.doc
+	runCtx := ctx
+	if cmd.hasMaxTimeMS {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		runCtx = commandContext{ctx}
+	}
 	database := client.Database(cfg.database)
-	if returnsCursor(cmd.doc) {
-		cursor, err := database.RunCommandCursor(ctx, cmd.doc)
+	if returnsCursor(doc) {
+		cursor, err := database.RunCommandCursor(runCtx, doc)
 		if err != nil {
 			return nil, err
 		}
@@ -38,7 +64,7 @@ func (cmd command) run(ctx context.Context, client *mongo.Client, cfg connConfig
 		}
 		return documents(raws)
 	}
-	raw, err := database.RunCommand(ctx, cmd.doc).Raw()
+	raw, err := database.RunCommand(runCtx, doc).Raw()
 	if err != nil {
 		return nil, err
 	}
