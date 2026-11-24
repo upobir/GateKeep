@@ -40,7 +40,7 @@ func (Plugin) Info() plugin.Info {
 			{Name: "tls", Label: "TLS", Optional: true},
 		},
 		ToolDescription:    "Runs one MongoDB command.",
-		CommandDescription: "One MongoDB command document as extended JSON, run on the resource database. The first field is the command name, for example {\"find\":\"orders\",\"filter\":{\"status\":\"open\"},\"limit\":20}. A command that returns a cursor comes back as its documents.",
+		CommandDescription: "One MongoDB command document as extended JSON, run on the resource database. The first field is the command name, for example {\"find\":\"orders\",\"filter\":{\"status\":\"open\"},\"limit\":20}. Omit the top-level maxTimeMS field because the driver supplies it from the execution timeout. A command that returns a cursor comes back as its documents.",
 	}
 }
 
