@@ -14,6 +14,15 @@ import (
 	"gatekeep/internal/plugin"
 )
 
+func TestOutputLimit(t *testing.T) {
+	var b limitedBuffer
+	text := strings.Repeat("x", 2<<20)
+	n, err := io.Copy(&b, strings.NewReader(text))
+	if err != nil || n != int64(len(text)) || b.buffer.Len() != 1<<20 || !b.overflow {
+		t.Fatalf("copy = %d, %v, length=%d, overflow=%v", n, err, b.buffer.Len(), b.overflow)
+	}
+}
+
 func fakeAWS(t *testing.T, body string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -167,14 +176,5 @@ printf '  account\t%s\n\n' "$AWS_SECRET_ACCESS_KEY"
 				t.Fatalf("raw text = %q", result)
 			}
 		})
-	}
-}
-
-func TestOutputLimit(t *testing.T) {
-	var b limitedBuffer
-	text := strings.Repeat("x", 2<<20)
-	n, err := io.Copy(&b, strings.NewReader(text))
-	if err != nil || n != int64(len(text)) || b.buffer.Len() != 1<<20 || !b.overflow {
-		t.Fatalf("copy = %d, %v, length=%d, overflow=%v", n, err, b.buffer.Len(), b.overflow)
 	}
 }

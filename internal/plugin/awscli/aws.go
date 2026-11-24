@@ -26,8 +26,8 @@ func (Plugin) Info() plugin.Info {
 			{Name: "sessionToken", Label: "Session token", Secret: true, Optional: true},
 			{Name: "region", Label: "Region", Optional: true},
 		},
-		ToolDescription:    "Runs the installed AWS CLI using this resource's saved credentials. Output defaults to JSON, with the pager and interactive prompts disabled. Non-JSON output is returned as text. Never include credentials in commands. Local AWS profiles are not used.",
-		CommandDescription: `A JSON array of AWS CLI arguments, for example ["sts","get-caller-identity"] or ["ec2","describe-instances","--region","us-east-1"]. Omit the aws executable. Authentication and pager settings are managed by GateKeep. Output defaults to JSON; --output can override it. Interactive login, configuration and credential-issuing commands are not supported.`,
+		ToolDescription:    "Runs the installed AWS CLI using this resource's saved credentials. GateKeep automatically appends --color off and disables the pager and interactive prompts. Do not supply --color, --no-cli-pager, --cli-auto-prompt or --no-cli-auto-prompt; these settings are already managed by GateKeep. Output defaults to JSON; --output can override it. Non-JSON output is returned as text. Never include credentials in commands. Local AWS profiles are not used.",
+		CommandDescription: `A JSON array of AWS CLI arguments, for example ["sts","get-caller-identity"] or ["ec2","describe-instances","--region","us-east-1"]. Omit the aws executable. GateKeep adds --color off, sets AWS_PAGER="" and AWS_CLI_AUTO_PROMPT=off, and defaults AWS_DEFAULT_OUTPUT=json. Do not include --color, --no-cli-pager, --cli-auto-prompt or --no-cli-auto-prompt. Authentication is managed by GateKeep; do not include --profile or credentials. --output is allowed when a different format is needed. Interactive login, configuration and credential-issuing commands are not supported.`,
 	}
 }
 
