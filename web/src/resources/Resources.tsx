@@ -17,6 +17,12 @@ type Resource = {
   cacheIdleSeconds: number | null
 }
 
+type ResourceType = {
+  type: string
+  available: boolean
+  unavailableReason?: string
+}
+
 type CacheObject = {
   name: string
   createdAt: string
@@ -199,6 +205,7 @@ function ResourceForm({
   onSaved: (saved: Resource) => void
 }) {
   const [selected, setSelected] = useState(plugin)
+  const [types, setTypes] = useState<ResourceType[] | null>(null)
   const [name, setName] = useState(resource?.name ?? '')
   const [config, setConfig] = useState<Record<string, string>>(resource?.config ?? {})
   const [secrets, setSecrets] = useState<Record<string, string>>(resource?.secrets ?? {})
@@ -210,6 +217,27 @@ function ResourceForm({
   )
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/resource-types').then(async (response) => {
+      if (!response.ok) {
+        throw new Error(await errorMessage(response))
+      }
+      const values = (await response.json()) as ResourceType[]
+      if (!cancelled) {
+        setTypes(values)
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setError('Could not check resource availability')
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  const availability = types?.find((item) => item.type === selected.type)
+  const unavailable = !types || !availability?.available
   const Form = selected.Form
 
   function payload() {
@@ -227,6 +255,10 @@ function ResourceForm({
   async function testConnection() {
     setMessage('')
     setError('')
+    if (unavailable) {
+      setError(availability?.unavailableReason || 'Resource type is unavailable')
+      return
+    }
     const response = await postJSON('/api/resources/test', payload())
     if (!response.ok) {
       setError(await errorMessage(response))
@@ -239,6 +271,10 @@ function ResourceForm({
     event.preventDefault()
     setMessage('')
     setError('')
+    if (!resource && unavailable) {
+      setError(availability?.unavailableReason || 'Resource type is unavailable')
+      return
+    }
     if (!resourceNamePattern.test(name)) {
       setError('Name may only use letters, digits, underscore, and hyphen.')
       return
@@ -275,14 +311,18 @@ function ResourceForm({
               }
             }}
           >
-            {resourcePlugins.map((item) => (
-              <option key={item.type} value={item.type}>
-                {item.label}
-              </option>
-            ))}
+            {resourcePlugins.map((item) => {
+              const status = types?.find((entry) => entry.type === item.type)
+              return (
+                <option key={item.type} value={item.type} disabled={!status?.available}>
+                  {item.label}{status?.unavailableReason ? ` — ${status.unavailableReason}` : ''}
+                </option>
+              )
+            })}
           </select>
         )}
       </label>
+      {availability?.unavailableReason ? <p>{availability.unavailableReason}</p> : null}
       <label>
         Name
         <input
@@ -332,10 +372,10 @@ function ResourceForm({
       {error ? <p className="error">{error}</p> : null}
       {message ? <p>{message}</p> : null}
       <div className="form-actions">
-        <button type="button" onClick={testConnection}>
+        <button type="button" disabled={unavailable} onClick={testConnection}>
           Test connection
         </button>
-        <button type="submit">{resource ? 'Save' : 'Add'}</button>
+        <button type="submit" disabled={!resource && unavailable}>{resource ? 'Save' : 'Add'}</button>
         <button type="button" onClick={onCancel}>
           Cancel
         </button>

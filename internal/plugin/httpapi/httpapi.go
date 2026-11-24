@@ -239,3 +239,6 @@ func (t target) redactError(err error) error {
 	}
 	return errors.New(text)
 }
+
+// Available reports whether local dependencies are present.
+func (Plugin) Available() error { return nil }

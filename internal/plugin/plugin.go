@@ -19,6 +19,8 @@ type Field struct {
 // commands that type accepts and how to write one the user can read.
 // Neither field mentions approval. The MCP instructions cover that.
 type Info struct {
+	Available          bool    `json:"available"`
+	UnavailableReason  string  `json:"unavailableReason,omitempty"`
 	Type               string  `json:"type"`
 	Label              string  `json:"label"`
 	Fields             []Field `json:"fields"`
@@ -43,6 +45,8 @@ type Cache interface {
 // and is added to the registry.
 type Plugin interface {
 	Info() Info
+	// Available checks local dependencies, independently of resource credentials.
+	Available() error
 	Test(ctx context.Context, config, secrets map[string]string) error
 	// Execute runs one approved command. The result is returned to the harness.
 	// Stop when ctx is cancelled. An error means the command failed.
@@ -78,7 +82,13 @@ func New(plugins ...Plugin) (*Registry, error) {
 func (r *Registry) List() []Info {
 	out := make([]Info, 0, len(r.list))
 	for _, item := range r.list {
-		out = append(out, item.Info())
+		info := item.Info()
+		info.Available = true
+		if err := item.Available(); err != nil {
+			info.Available = false
+			info.UnavailableReason = err.Error()
+		}
+		out = append(out, info)
 	}
 	return out
 }

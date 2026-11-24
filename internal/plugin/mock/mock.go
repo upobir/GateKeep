@@ -74,3 +74,6 @@ func nextValue(cache plugin.Cache) int64 {
 	number, _ := value.(int64)
 	return number
 }
+
+// Available reports whether local dependencies are present.
+func (Plugin) Available() error { return nil }
