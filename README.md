@@ -32,6 +32,8 @@ GateKeep lives in the menu bar. Click its icon to open the web UI at <http://127
 
 To check the installed version, open GateKeep's system tray menu or look beneath **GateKeep** in the web UI sidebar.
 
+On startup, release builds check GitHub for a newer release in the background. When one is available, the tray menu shows **Get v…**; click it to open that release's download page. Development builds skip this check.
+
 ### Verify the download (optional)
 
 Releases are built by GitHub Actions from this repo. To confirm a DMG came from that build:

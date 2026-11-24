@@ -1,6 +1,7 @@
 package tray
 
 import (
+	"context"
 	"log"
 	"os/exec"
 	"runtime"
@@ -9,6 +10,7 @@ import (
 	"gatekeep/internal/icon"
 	"gatekeep/internal/notify"
 	"gatekeep/internal/startup"
+	"gatekeep/internal/update"
 	"github.com/getlantern/systray"
 )
 
@@ -20,7 +22,10 @@ type Options struct {
 }
 
 func Run(opts Options) {
-	systray.Run(func() { onReady(opts) }, func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	systray.Run(func() { onReady(ctx, opts) }, func() {
+		cancel()
 		if opts.OnQuit != nil {
 			opts.OnQuit()
 		}
@@ -31,7 +36,7 @@ func Quit() {
 	systray.Quit()
 }
 
-func onReady(opts Options) {
+func onReady(ctx context.Context, opts Options) {
 	png, err := icon.PNG(64)
 	if err != nil {
 		log.Fatalf("icon: %v", err)
@@ -40,6 +45,8 @@ func onReady(opts Options) {
 	systray.SetTooltip("GateKeep " + buildinfo.Version)
 	versionItem := systray.AddMenuItem("GateKeep "+buildinfo.Version, "Commit "+buildinfo.Commit)
 	versionItem.Disable()
+	updateItem := systray.AddMenuItem("Get update", "Download the latest GateKeep release")
+	updateItem.Hide()
 	systray.AddSeparator()
 
 	openItem := systray.AddMenuItem("Open UI", "Open GateKeep in the browser")
@@ -52,9 +59,33 @@ func onReady(opts Options) {
 		opts.OnReady()
 	}
 
+	releases := make(chan *update.Release, 1)
 	go func() {
+		release, err := update.Check(ctx, buildinfo.Version)
+		if err != nil && ctx.Err() == nil {
+			log.Printf("update check: %v", err)
+		}
+		releases <- release
+	}()
+
+	go func() {
+		var releaseURL string
 		for {
 			select {
+			case <-ctx.Done():
+				return
+			case release := <-releases:
+				if release != nil {
+					releaseURL = release.URL
+					updateItem.SetTitle("Get " + release.Version)
+					updateItem.Show()
+				}
+			case <-updateItem.ClickedCh:
+				if releaseURL != "" {
+					if err := openURL(releaseURL); err != nil {
+						log.Printf("open release: %v", err)
+					}
+				}
 			case <-openItem.ClickedCh:
 				if err := openURL(opts.URL); err != nil {
 					log.Printf("open ui: %v", err)
