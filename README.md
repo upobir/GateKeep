@@ -14,6 +14,7 @@ GateKeep gives AI coding agents access to your production databases, with a huma
 - ClickHouse
 - MongoDB
 - Redis
+- AWS (CLI; installed separately)
 
 ## Install
 

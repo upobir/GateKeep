@@ -88,6 +88,12 @@ func (s *Server) handleCreateResource(w http.ResponseWriter, r *http.Request) {
 	}
 	s.secretsMu.Lock()
 	defer s.secretsMu.Unlock()
+	if item, ok := s.plugins.Get(input.Type); ok {
+		if err := item.Available(); err != nil {
+			writeResourceError(w, err)
+			return
+		}
+	}
 	configJSON, secrets, err := s.sealResource(input, nil)
 	if err != nil {
 		writeResourceError(w, err)
@@ -249,6 +255,10 @@ func (s *Server) handleTestResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, _ := s.plugins.Get(input.Type)
+	if err := item.Available(); err != nil {
+		writeResourceError(w, err)
+		return
+	}
 	if err := item.Test(r.Context(), config, secrets); err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return

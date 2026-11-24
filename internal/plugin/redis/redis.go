@@ -305,3 +305,6 @@ func tlsMode(config map[string]string) (string, error) {
 		return "", errors.New("tls must be off, on or skip-verify")
 	}
 }
+
+// Available reports whether local dependencies are present.
+func (Plugin) Available() error { return nil }

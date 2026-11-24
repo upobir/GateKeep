@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { awsCliPlugin } from './aws.tsx'
 import { clickhousePlugin } from './clickhouse.tsx'
 import { httpPlugin } from './http.tsx'
 import { mockPlugin } from './mock.tsx'
@@ -39,7 +40,7 @@ export function resultText(type: string, result: string) {
   return pluginFor(type)?.resultText(result) ?? result
 }
 
-export const resourcePlugins: ResourcePlugin[] = [mysqlPlugin, postgresPlugin, clickhousePlugin, mongodbPlugin, redisPlugin, httpPlugin, mockPlugin]
+export const resourcePlugins: ResourcePlugin[] = [mysqlPlugin, postgresPlugin, clickhousePlugin, mongodbPlugin, redisPlugin, httpPlugin, awsCliPlugin, mockPlugin]
 
 export function pluginFor(type: string): ResourcePlugin | undefined {
   return resourcePlugins.find((item) => item.type === type)

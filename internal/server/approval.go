@@ -419,6 +419,10 @@ func (s *Server) runApproved(ctx context.Context, call db.ToolCall) (any, error)
 			return nil, err
 		}
 	}
+	if err := item.Available(); err != nil {
+		s.secretsMu.Unlock()
+		return nil, err
+	}
 	cache := s.caches.Handle(resource.ID, cacheIdle(resource))
 	command := call.Command
 	s.secretsMu.Unlock()
