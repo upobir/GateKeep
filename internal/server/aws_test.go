@@ -44,8 +44,8 @@ func TestAWSResourceAvailabilityAndVault(t *testing.T) {
 		}
 		t.Fatal("AWS type missing")
 	}
-	checkAvailability(false)
-	const payload = `{"name":"aws-test","type":"aws","config":{"region":"us-east-1"},"secrets":{"accessKeyId":"example-access-key","secretAccessKey":"example-secret-key","sessionToken":"example-session-token"}}`
+	checkAvailability(true)
+	payload := `{"name":"aws-test","type":"aws","config":{"region":"us-east-1"},"secrets":{"accessKeyId":"example-access-key","secretAccessKey":"example-secret-key","sessionToken":"example-session-token"}}`
 	resp, err := client.Post(srv.URL()+"/api/resources", "application/json", strings.NewReader(payload))
 	if err != nil {
 		t.Fatal(err)
@@ -59,10 +59,29 @@ func TestAWSResourceAvailabilityAndVault(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkAvailability(true)
+	// An explicit path allows creation and execution without aws on PATH.
+	t.Setenv("PATH", t.TempDir())
+	var inputPayload map[string]any
+	if err := json.Unmarshal([]byte(payload), &inputPayload); err != nil {
+		t.Fatal(err)
+	}
+	inputPayload["config"].(map[string]any)["cliPath"] = filepath.Join(dir, "aws")
+	encoded, err := json.Marshal(inputPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload = string(encoded)
 	resource := postResource(t, client, srv, payload)
 	stored, err := store.GetResource(context.Background(), resource.ID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var savedConfig map[string]string
+	if err := json.Unmarshal([]byte(stored.ConfigJSON), &savedConfig); err != nil {
+		t.Fatal(err)
+	}
+	if savedConfig["cliPath"] != filepath.Join(dir, "aws") {
+		t.Fatalf("saved config = %#v", savedConfig)
 	}
 	for _, secret := range []string{"example-access-key", "example-secret-key", "example-session-token"} {
 		if strings.Contains(stored.ConfigJSON, secret) || strings.Contains(string(stored.SecretsCiphertext), secret) {
@@ -82,7 +101,11 @@ func TestAWSResourceAvailabilityAndVault(t *testing.T) {
 		t.Fatal("resource list exposed credentials")
 	}
 
-	input := `{"id":` + strconv.FormatInt(resource.ID, 10) + `,"type":"aws","config":{"region":"us-east-1"},"secrets":{}}`
+	configJSON, err := json.Marshal(savedConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := `{"id":` + strconv.FormatInt(resource.ID, 10) + `,"type":"aws","config":` + string(configJSON) + `,"secrets":{}}`
 	resp, err = client.Post(srv.URL()+"/api/resources/test", "application/json", strings.NewReader(input))
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +126,7 @@ func TestAWSResourceAvailabilityAndVault(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "aws")); err != nil {
 		t.Fatal(err)
 	}
-	checkAvailability(false)
+	checkAvailability(true)
 	if _, err := srv.runApproved(context.Background(), db.ToolCall{ResourceID: &resource.ID, Command: `["sts","get-caller-identity"]`}); err == nil {
 		t.Fatal("execution accepted missing CLI")
 	}

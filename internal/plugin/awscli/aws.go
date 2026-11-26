@@ -25,18 +25,15 @@ func (Plugin) Info() plugin.Info {
 			{Name: "secretAccessKey", Label: "Secret access key", Secret: true},
 			{Name: "sessionToken", Label: "Session token", Secret: true, Optional: true},
 			{Name: "region", Label: "Region", Optional: true},
+			{Name: "cliPath", Label: "AWS CLI path"},
 		},
 		ToolDescription:    "Runs the installed AWS CLI using this resource's saved credentials. GateKeep disables the pager and interactive prompts. Do not supply --color, --no-cli-pager, --cli-auto-prompt or --no-cli-auto-prompt. Output defaults to JSON; --output can override it. Non-JSON output is returned as text. Never include credentials in commands. Local AWS profiles are not used.",
 		CommandDescription: `A JSON array of AWS CLI arguments, for example ["sts","get-caller-identity"] or ["ec2","describe-instances","--region","us-east-1"]. Omit the aws executable. GateKeep sets AWS_PAGER="" and AWS_CLI_AUTO_PROMPT=off, and defaults AWS_DEFAULT_OUTPUT=json. Do not supply --color, --no-cli-pager, --cli-auto-prompt or --no-cli-auto-prompt. Authentication is managed by GateKeep; do not include --profile or credentials. --output is allowed when a different format is needed. Interactive login, configuration and credential-issuing commands are not supported.`,
 	}
 }
 
-func (Plugin) Available() error {
-	if _, err := exec.LookPath("aws"); err != nil {
-		return errors.New("AWS CLI is not available on GateKeep's PATH. Install AWS CLI and restart GateKeep")
-	}
-	return nil
-}
+// The executable is configured per resource, so AWS is always selectable.
+func (Plugin) Available() error { return nil }
 
 func (p Plugin) Test(ctx context.Context, config, secrets map[string]string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -53,10 +50,7 @@ func (p Plugin) Execute(ctx context.Context, command string, config, secrets map
 	if secrets["accessKeyId"] == "" || secrets["secretAccessKey"] == "" {
 		return nil, errors.New("access key ID and secret access key are required")
 	}
-	if err := p.Available(); err != nil {
-		return nil, err
-	}
-	cmd := exec.CommandContext(ctx, "aws", args...)
+	cmd := exec.CommandContext(ctx, strings.TrimSpace(config["cliPath"]), args...)
 	cmd.Env = environment(os.Environ(), config, secrets)
 	cmd.WaitDelay = time.Second
 	stdout, stderr := &limitedBuffer{}, &limitedBuffer{}

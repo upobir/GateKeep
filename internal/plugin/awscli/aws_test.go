@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"gatekeep/internal/plugin"
 )
 
 func TestOutputLimit(t *testing.T) {
@@ -23,32 +21,51 @@ func TestOutputLimit(t *testing.T) {
 	}
 }
 
-func fakeAWS(t *testing.T, body string) {
+func fakeAWS(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "aws"), []byte("#!/bin/sh\n"+body), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
+	return filepath.Join(dir, "aws")
 }
 
 func credentials() map[string]string {
 	return map[string]string{"accessKeyId": "test-access-id", "secretAccessKey": "test-secret-key", "sessionToken": "test-session-token"}
 }
 
-func TestAvailabilityUpdatesWithPATH(t *testing.T) {
+func TestConfiguredCLIPath(t *testing.T) {
+	p := Plugin{}
 	t.Setenv("PATH", t.TempDir())
-	r, err := plugin.New(Plugin{})
+	if err := p.Available(); err != nil {
+		t.Fatal("AWS form must remain available for configuring a path")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "aws custom")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '{\"Account\":\"custom\"}'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := map[string]string{"cliPath": path}
+	// A configured path wins even if PATH contains another executable.
+	fakeAWS(t, "exit 1\n")
+	result, err := p.Execute(context.Background(), `["sts","get-caller-identity"]`, config, credentials(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	info := r.List()[0]
-	if info.Available || !strings.Contains(info.UnavailableReason, "PATH") {
-		t.Fatalf("availability = %+v", info)
+	if result.(map[string]any)["Account"] != "custom" {
+		t.Fatalf("result = %#v", result)
 	}
-	fakeAWS(t, "exit 0\n")
-	if info := r.List()[0]; !info.Available || info.UnavailableReason != "" {
-		t.Fatalf("availability = %+v", info)
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, config := range []map[string]string{nil, {"cliPath": ""}, {"cliPath": "  "}, {"cliPath": dir}, {"cliPath": filepath.Join(dir, "missing")}, {"cliPath": path}} {
+		if _, err := p.Execute(context.Background(), `["sts","get-caller-identity"]`, config, credentials(), nil); err == nil || !strings.Contains(err.Error(), "AWS CLI failed:") {
+			t.Fatalf("execution with invalid path = %v", err)
+		}
+		if err := p.Test(context.Background(), config, credentials()); err == nil || !strings.Contains(err.Error(), "AWS CLI failed:") {
+			t.Fatalf("connection test with invalid path = %v", err)
+		}
 	}
 }
 
@@ -56,7 +73,7 @@ func TestExecuteUsesOnlyResourceCredentials(t *testing.T) {
 	t.Setenv("AWS_PROFILE", "wrong-profile")
 	t.Setenv("AWS_ACCESS_KEY_ID", "wrong-key")
 	t.Setenv("AWS_ENDPOINT_URL", "https://wrong.example")
-	fakeAWS(t, `
+	cliPath := fakeAWS(t, `
 set -eu
 [ "$AWS_ACCESS_KEY_ID" = test-access-id ]
 [ "$AWS_SECRET_ACCESS_KEY" = test-secret-key ]
@@ -75,7 +92,7 @@ set -eu
 [ "$3" = 'literal; $(echo should-not-run)' ]
 printf '{"Account":"123456789012","Nested":["%s"],"%s":"masked","Number":1234567890123456789}' "$AWS_SECRET_ACCESS_KEY" "$AWS_ACCESS_KEY_ID"
 `)
-	result, err := (Plugin{}).Execute(context.Background(), `["sts","get-caller-identity","literal; $(echo should-not-run)"]`, map[string]string{"region": "us-east-1"}, credentials(), nil)
+	result, err := (Plugin{}).Execute(context.Background(), `["sts","get-caller-identity","literal; $(echo should-not-run)"]`, map[string]string{"region": "us-east-1", "cliPath": cliPath}, credentials(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,8 +144,8 @@ func TestExecuteResultsAndErrors(t *testing.T) {
 		{"non-json", `printf 'not json'`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fakeAWS(t, tc.body)
-			_, err := (Plugin{}).Execute(context.Background(), `["sts","get-caller-identity"]`, nil, credentials(), nil)
+			cliPath := fakeAWS(t, tc.body)
+			_, err := (Plugin{}).Execute(context.Background(), `["sts","get-caller-identity"]`, map[string]string{"cliPath": cliPath}, credentials(), nil)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatal(err)
@@ -143,11 +160,11 @@ func TestExecuteResultsAndErrors(t *testing.T) {
 }
 
 func TestCancellation(t *testing.T) {
-	fakeAWS(t, "exec /bin/sleep 10\n")
+	cliPath := fakeAWS(t, "exec /bin/sleep 10\n")
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	_, err := (Plugin{}).Execute(ctx, `["sts","get-caller-identity"]`, nil, credentials(), nil)
+	_, err := (Plugin{}).Execute(ctx, `["sts","get-caller-identity"]`, map[string]string{"cliPath": cliPath}, credentials(), nil)
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 2*time.Second {
 		t.Fatalf("cancellation = %v after %s", err, time.Since(start))
 	}
@@ -156,7 +173,7 @@ func TestCancellation(t *testing.T) {
 func TestOutputOverrideReturnsRawText(t *testing.T) {
 	for _, flag := range []string{"--output", "--output=text", "--out"} {
 		t.Run(flag, func(t *testing.T) {
-			fakeAWS(t, `
+			cliPath := fakeAWS(t, `
 set -eu
 [ "$AWS_DEFAULT_OUTPUT" = json ]
 [ "$3" = '`+flag+`' ]
@@ -167,7 +184,7 @@ printf '  account\t%s\n\n' "$AWS_SECRET_ACCESS_KEY"
 				args = append(args, "text")
 			}
 			command, _ := json.Marshal(args)
-			result, err := (Plugin{}).Execute(context.Background(), string(command), nil, credentials(), nil)
+			result, err := (Plugin{}).Execute(context.Background(), string(command), map[string]string{"cliPath": cliPath}, credentials(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
