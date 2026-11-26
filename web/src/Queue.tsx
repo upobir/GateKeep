@@ -30,30 +30,34 @@ export function Queue({ focusID, tick }: { focusID: number | null; tick: number 
   const now = useNow()
 
   const load = useCallback(async () => {
-    const response = await fetch('/api/approvals')
-    if (!response.ok) {
-      setError(await errorMessage(response))
-      return
-    }
-    setItems((await response.json()) as Approval[])
-    setError('')
-    if (focusID == null) {
-      setFocused(null)
+    try {
+      const response = await fetch('/api/approvals')
+      if (!response.ok) {
+        setError(await errorMessage(response))
+        return
+      }
+      setItems((await response.json()) as Approval[])
+      setError('')
+      if (focusID == null) {
+        setFocused(null)
+        setMissing(false)
+        return
+      }
+      const one = await fetch(`/api/approvals/${focusID}`)
+      if (one.status === 404) {
+        setFocused(null)
+        setMissing(true)
+        return
+      }
+      if (!one.ok) {
+        setError(await errorMessage(one))
+        return
+      }
       setMissing(false)
-      return
+      setFocused((await one.json()) as Approval)
+    } catch {
+      setError('Could not load approvals. Check the connection to GateKeep.')
     }
-    const one = await fetch(`/api/approvals/${focusID}`)
-    if (one.status === 404) {
-      setFocused(null)
-      setMissing(true)
-      return
-    }
-    if (!one.ok) {
-      setError(await errorMessage(one))
-      return
-    }
-    setMissing(false)
-    setFocused((await one.json()) as Approval)
   }, [focusID])
 
   useEffect(() => {
@@ -121,7 +125,7 @@ export function CallList({
   focusID: number | null
   now: number
   timeoutSeconds: number
-  onDecided: () => void
+  onDecided: () => void | Promise<void>
 }) {
   if (calls.length === 0) {
     return null
@@ -163,7 +167,7 @@ function ApprovalCard({
   current: boolean
   now: number
   timeoutSeconds: number
-  onDecided: () => void
+  onDecided: () => void | Promise<void>
 }) {
   const [reason, setReason] = useState('')
   const [pending, setPending] = useState(false)
@@ -176,82 +180,51 @@ function ApprovalCard({
   const result = successResult(call)
   const notes = callNotes(call)
 
-  async function approve() {
-    setRunning(true)
-    setReason('')
-    setError('')
-    const response = await fetch(`/api/approvals/${call.id}/approve`, { method: 'POST' })
-    setRunning(false)
-    if (!response.ok) {
-      setError(await errorMessage(response))
-      onDecided()
-      return
+  async function decide(action: 'approve' | 'results' | 'reject' | 'cancel' | 'send') {
+    const startsExecution = action === 'approve' || action === 'results'
+    if (startsExecution) {
+      setRunning(true)
+    } else {
+      setPending(true)
     }
-    onDecided()
+    setError('')
+    try {
+      const response = await fetch(`/api/approvals/${call.id}/${action}`, {
+        method: 'POST',
+        ...(action === 'reject' || action === 'cancel'
+          ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) }
+          : {}),
+      })
+      if (!response.ok) {
+        setError(await errorMessage(response))
+        return
+      }
+      setReason('')
+      if (action === 'cancel') setRunning(false)
+    } catch {
+      setError('Could not reach GateKeep. Check the request status before trying again.')
+    } finally {
+      if (startsExecution) {
+        setRunning(false)
+      } else {
+        setPending(false)
+      }
+      try {
+        await onDecided()
+      } catch {
+        setError((current) => current || 'Could not refresh the request status.')
+      }
+    }
   }
 
   async function reject(event: FormEvent) {
     event.preventDefault()
-    setPending(true)
-    setError('')
-    const response = await fetch(`/api/approvals/${call.id}/reject`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason }),
-    })
-    setPending(false)
-    if (!response.ok) {
-      setError(await errorMessage(response))
-      return
-    }
-    setReason('')
-    onDecided()
+    await decide('reject')
   }
 
   async function cancel(event: FormEvent) {
     event.preventDefault()
-    setPending(true)
-    setError('')
-    const response = await fetch(`/api/approvals/${call.id}/cancel`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason }),
-    })
-    setPending(false)
-    if (!response.ok) {
-      setError(await errorMessage(response))
-      return
-    }
-    setReason('')
-    setRunning(false)
-    onDecided()
-  }
-
-  async function seeResults() {
-    setRunning(true)
-    setReason('')
-    setError('')
-    const response = await fetch(`/api/approvals/${call.id}/results`, { method: 'POST' })
-    setRunning(false)
-    if (!response.ok) {
-      setError(await errorMessage(response))
-      onDecided()
-      return
-    }
-    onDecided()
-  }
-
-  async function sendResults() {
-    setPending(true)
-    setError('')
-    const response = await fetch(`/api/approvals/${call.id}/send`, { method: 'POST' })
-    setPending(false)
-    if (!response.ok) {
-      setError(await errorMessage(response))
-      onDecided()
-      return
-    }
-    onDecided()
+    await decide('cancel')
   }
 
   return (
@@ -305,17 +278,17 @@ function ApprovalCard({
       ) : null}
       {waiting && !running ? (
         <div className="decision-row">
-          <button type="button" className="approve" disabled={pending} onClick={approve}>
+          <button type="button" className="approve" disabled={pending} onClick={() => void decide('approve')}>
             Approve
           </button>
-          <button type="button" className="see" disabled={pending} onClick={seeResults}>
+          <button type="button" className="see" disabled={pending} onClick={() => void decide('results')}>
             See results
           </button>
         </div>
       ) : null}
       {reviewing ? (
         <div className="decision-row">
-          <button type="button" className="approve" disabled={pending} onClick={sendResults}>
+          <button type="button" className="approve" disabled={pending} onClick={() => void decide('send')}>
             Send results
           </button>
         </div>
@@ -409,7 +382,7 @@ function callNotes(call: Approval) {
   return notes
 }
 
-function DeleteCall({ id, onDeleted }: { id: number; onDeleted: () => void }) {
+function DeleteCall({ id, onDeleted }: { id: number; onDeleted: () => void | Promise<void> }) {
   const [confirming, setConfirming] = useState(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
@@ -417,13 +390,18 @@ function DeleteCall({ id, onDeleted }: { id: number; onDeleted: () => void }) {
   async function remove() {
     setPending(true)
     setError('')
-    const response = await fetch(`/api/approvals/${id}`, { method: 'DELETE' })
-    setPending(false)
-    if (!response.ok) {
-      setError(await errorMessage(response))
-      return
+    try {
+      const response = await fetch(`/api/approvals/${id}`, { method: 'DELETE' })
+      if (!response.ok) {
+        setError(await errorMessage(response))
+        return
+      }
+      await onDeleted()
+    } catch {
+      setError('Could not delete the call. Check the connection to GateKeep.')
+    } finally {
+      setPending(false)
     }
-    onDeleted()
   }
 
   return (
