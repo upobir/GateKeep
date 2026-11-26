@@ -11,6 +11,7 @@ type Resource = {
   name: string
   type: string
   config: Record<string, string>
+  resourceText: string
   hasSecrets: boolean
   secrets?: Record<string, string>
   executionTimeoutSeconds: number | null
@@ -75,6 +76,10 @@ export function Resources() {
               })
               .catch(() => setError('Could not load the resource'))
           }}
+          onTextSaved={(text) => {
+            setScreen({ mode: 'view', resource: { ...viewed, resourceText: text } })
+            reload().catch(() => setError('Could not load resources'))
+          }}
           onBack={() => setScreen({ mode: 'list' })}
           onDeleted={() => {
             setScreen({ mode: 'list' })
@@ -134,12 +139,14 @@ function ResourceView({
   onEdit,
   onBack,
   onDeleted,
+  onTextSaved,
 }: {
   resource: Resource
   plugin: ResourcePlugin
   onEdit: () => void
   onBack: () => void
   onDeleted: () => void
+  onTextSaved: (text: string) => void
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [error, setError] = useState('')
@@ -189,6 +196,7 @@ function ResourceView({
         </button>
       </div>
       <CacheList resourceID={resource.id} />
+      <ResourceTextForm key={resource.id} resource={resource} onSaved={onTextSaved} />
     </div>
   )
 }
@@ -486,4 +494,56 @@ function when(value: string) {
     return value
   }
   return parsed.toLocaleString()
+}
+
+function ResourceTextForm({ resource, onSaved }: { resource: Resource; onSaved: (text: string) => void }) {
+  const [text, setText] = useState(resource.resourceText)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (saving) return
+    setSaving(true)
+    setError('')
+    setMessage('')
+    try {
+      const response = await fetch(`/api/resources/${resource.id}/text`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
+      if (!response.ok) {
+        setError(await errorMessage(response))
+        return
+      }
+      onSaved(text)
+      setMessage('Saved')
+    } catch {
+      setError('Could not save resource text')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form className="resource-form resource-text-form" onSubmit={save}>
+      <h3>MCP resource text</h3>
+      <p>Context agents can read for this connection, such as schema details, usage notes, or examples.</p>
+      <code>gatekeep://resources/{resource.id}/context</code>
+      <label>
+        Additional text
+        <textarea rows={12} value={text} disabled={saving} onChange={(event) => {
+          setText(event.target.value)
+          setMessage('')
+        }} />
+      </label>
+      {error ? <p className="error">{error}</p> : null}
+      {message ? <p role="status">{message}</p> : null}
+      <div className="form-actions">
+        <button type="submit" disabled={saving} aria-busy={saving}>{saving ? 'Saving…' : 'Save text'}</button>
+      </div>
+    </form>
+  )
 }

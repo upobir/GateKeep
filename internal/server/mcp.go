@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -163,7 +162,7 @@ func (s *Server) handleModernMCP(w http.ResponseWriter, r *http.Request, req rpc
 		writeRPCResult(w, http.StatusOK, req.ID, map[string]any{
 			"resultType":        "complete",
 			"supportedVersions": []string{mcp.ModernVersion},
-			"capabilities":      map[string]any{"tools": map[string]any{"listChanged": false}},
+			"capabilities":      map[string]any{"tools": map[string]any{"listChanged": false}, "resources": map[string]any{}},
 			"instructions":      s.instructions(r.Context()),
 			"_meta": map[string]any{
 				"io.modelcontextprotocol/serverInfo": map[string]any{
@@ -174,6 +173,8 @@ func (s *Server) handleModernMCP(w http.ResponseWriter, r *http.Request, req rpc
 		})
 	case "ping":
 		writeRPCResult(w, http.StatusOK, req.ID, map[string]any{})
+	case "resources/list", "resources/read", "resources/templates/list":
+		s.handleMCPResources(w, r, req, true)
 	case "tools/list":
 		s.writeToolList(w, r, req.ID, true)
 	case "tools/call":
@@ -196,7 +197,7 @@ func (s *Server) handleLegacyMCP(w http.ResponseWriter, r *http.Request, req rpc
 	switch req.Method {
 	case "initialize":
 		s.mcpInitialize(w, req)
-	case "ping", "tools/list", "tools/call":
+	case "ping", "tools/list", "tools/call", "resources/list", "resources/read", "resources/templates/list":
 		// A session is optional. Codex and other harnesses keep working when they
 		// do not send Mcp-Session-Id. An unknown id still means that session is gone.
 		session, status := s.legacySession(r)
@@ -207,6 +208,8 @@ func (s *Server) handleLegacyMCP(w http.ResponseWriter, r *http.Request, req rpc
 		switch req.Method {
 		case "ping":
 			writeRPCResult(w, http.StatusOK, req.ID, map[string]any{})
+		case "resources/list", "resources/read", "resources/templates/list":
+			s.handleMCPResources(w, r, req, false)
 		case "tools/list":
 			s.writeToolList(w, r, req.ID, false)
 		default:
@@ -247,7 +250,7 @@ func (s *Server) mcpInitialize(w http.ResponseWriter, req rpcRequest) {
 	w.Header().Set("Mcp-Session-Id", id)
 	writeRPCResult(w, http.StatusOK, req.ID, map[string]any{
 		"protocolVersion": version,
-		"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
+		"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}, "resources": map[string]any{}},
 		"serverInfo": map[string]any{
 			"name":    mcp.ServerName,
 			"version": buildinfo.Version,
@@ -290,17 +293,13 @@ func (s *Server) queueToolCall(w http.ResponseWriter, r *http.Request, req rpcRe
 		return
 	}
 
-	resource, err := s.store.ResourceByName(r.Context(), call.Resource)
+	resource, err := s.store.ResourceByName(r.Context(), call.Name, call.Resource)
 	if errors.Is(err, db.ErrNotFound) {
 		s.writeToolResult(w, req.ID, "unknown resource "+call.Resource, nil, true, modern)
 		return
 	}
 	if err != nil {
 		writeRPCError(w, http.StatusInternalServerError, req.ID, mcp.CodeInternal, "could not look up the resource", nil)
-		return
-	}
-	if resource.Type != call.Name {
-		s.writeToolResult(w, req.ID, fmt.Sprintf("resource %s is %s, not %s", resource.Name, resource.Type, call.Name), nil, true, modern)
 		return
 	}
 

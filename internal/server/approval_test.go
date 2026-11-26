@@ -904,7 +904,7 @@ func sealMockToken(t *testing.T, srv *Server, store *db.Store, name, token strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	resource, err := store.ResourceByName(context.Background(), name)
+	resource, err := store.ResourceByName(context.Background(), "mock", name)
 	if err != nil {
 		t.Fatal(err)
 	}

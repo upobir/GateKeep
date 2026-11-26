@@ -334,7 +334,7 @@ func TestMCPRejectsUnknownResourceAndOrigin(t *testing.T) {
 		},
 	})
 	text = toolText(t, decodeRPC(t, wrongType))
-	if !strings.Contains(text, "not mock") {
+	if !strings.Contains(text, "unknown resource orders") {
 		t.Fatalf("result = %q", text)
 	}
 	if _, err := store.GetToolCall(context.Background(), 1); err == nil {
