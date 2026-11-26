@@ -217,6 +217,7 @@ function ResourceForm({
   )
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [testing, setTesting] = useState(false)
   useEffect(() => {
     let cancelled = false
     fetch('/api/resource-types').then(async (response) => {
@@ -253,18 +254,26 @@ function ResourceForm({
   }
 
   async function testConnection() {
+    if (testing) return
     setMessage('')
     setError('')
     if (unavailable) {
       setError(availability?.unavailableReason || 'Resource type is unavailable')
       return
     }
-    const response = await postJSON('/api/resources/test', payload())
-    if (!response.ok) {
-      setError(await errorMessage(response))
-      return
+    setTesting(true)
+    try {
+      const response = await postJSON('/api/resources/test', payload())
+      if (!response.ok) {
+        setError(await errorMessage(response))
+        return
+      }
+      setMessage('Connection succeeded.')
+    } catch {
+      setError('Could not test the connection. Please try again.')
+    } finally {
+      setTesting(false)
     }
-    setMessage('Connection succeeded.')
   }
 
   async function save(event: FormEvent) {
@@ -372,8 +381,9 @@ function ResourceForm({
       {error ? <p className="error">{error}</p> : null}
       {message ? <p>{message}</p> : null}
       <div className="form-actions">
-        <button type="button" disabled={unavailable} onClick={testConnection}>
-          Test connection
+        <button type="button" disabled={unavailable || testing} aria-busy={testing} onClick={testConnection}>
+          {testing ? <span className="spinner button-spinner" aria-hidden="true" /> : null}
+          <span role="status">{testing ? 'Testing connection…' : 'Test connection'}</span>
         </button>
         <button type="submit" disabled={!resource && unavailable}>{resource ? 'Save' : 'Add'}</button>
         <button type="button" onClick={onCancel}>
