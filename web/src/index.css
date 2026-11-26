@@ -735,6 +735,15 @@ button.danger {
   animation: spin 0.7s linear infinite;
 }
 
+.button-spinner {
+  position: static;
+  display: inline-block;
+  width: 0.9rem;
+  height: 0.9rem;
+  margin: 0 0.5rem 0 0;
+  vertical-align: middle;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
