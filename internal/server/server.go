@@ -154,6 +154,7 @@ func New(port int, store *db.Store) (*Server, error) {
 	mux.HandleFunc("GET /api/resources/{id}", srv.requireSession(srv.handleGetResource))
 	mux.HandleFunc("PUT /api/resources/{id}", srv.requireSession(srv.handleUpdateResource))
 	mux.HandleFunc("DELETE /api/resources/{id}", srv.requireSession(srv.handleDeleteResource))
+	mux.HandleFunc("PUT /api/resources/{id}/text", srv.requireSession(srv.handleUpdateResourceText))
 	mux.HandleFunc("GET /api/resources/{id}/cache", srv.requireSession(srv.handleListCache))
 	mux.HandleFunc("DELETE /api/resources/{id}/cache/{name}", srv.requireSession(srv.handleClearCache))
 	mux.HandleFunc("/mcp", srv.handleMCP)

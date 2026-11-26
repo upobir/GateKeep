@@ -13,6 +13,7 @@ type Resource struct {
 	Name               string
 	Type               string
 	ConfigJSON         string
+	ResourceText       string
 	SecretsCiphertext  []byte
 	ExecutionTimeoutMs *int64
 	CacheIdleMs        *int64
@@ -35,9 +36,9 @@ func (s *Store) CreateResource(ctx context.Context, resource Resource) (Resource
 	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO resources(
-			name, type, config_json, execution_timeout_ms, cache_idle_ms, created_at, updated_at
-		) VALUES(?, ?, ?, ?, ?, ?, ?)
-	`, resource.Name, resource.Type, resource.ConfigJSON, resource.ExecutionTimeoutMs, resource.CacheIdleMs, formatTime(now), formatTime(now))
+			name, type, config_json, resource_text, execution_timeout_ms, cache_idle_ms, created_at, updated_at
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+	`, resource.Name, resource.Type, resource.ConfigJSON, resource.ResourceText, resource.ExecutionTimeoutMs, resource.CacheIdleMs, formatTime(now), formatTime(now))
 	if err != nil {
 		return Resource{}, err
 	}
@@ -81,8 +82,8 @@ func (s *Store) ListResources(ctx context.Context) ([]Resource, error) {
 	return resources, nil
 }
 
-func (s *Store) ResourceByName(ctx context.Context, name string) (Resource, error) {
-	row := s.db.QueryRowContext(ctx, resourceQuery(`WHERE name = ?`), name)
+func (s *Store) ResourceByName(ctx context.Context, resourceType, name string) (Resource, error) {
+	row := s.db.QueryRowContext(ctx, resourceQuery(`WHERE type = ? AND name = ?`), resourceType, name)
 	resource, err := scanResource(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Resource{}, ErrNotFound
@@ -117,11 +118,12 @@ func (s *Store) UpdateResource(ctx context.Context, resource Resource) error {
 			name = ?,
 			type = ?,
 			config_json = ?,
+			resource_text = ?,
 			execution_timeout_ms = ?,
 			cache_idle_ms = ?,
 			updated_at = ?
 		WHERE id = ?
-	`, resource.Name, resource.Type, resource.ConfigJSON, resource.ExecutionTimeoutMs, resource.CacheIdleMs, formatTime(resource.UpdatedAt), resource.ID)
+	`, resource.Name, resource.Type, resource.ConfigJSON, resource.ResourceText, resource.ExecutionTimeoutMs, resource.CacheIdleMs, formatTime(resource.UpdatedAt), resource.ID)
 	if err != nil {
 		return err
 	}
@@ -140,7 +142,7 @@ const resourceSecretExpr = `(SELECT ciphertext FROM resource_secrets WHERE resou
 
 func resourceQuery(tail string) string {
 	return `
-		SELECT id, name, type, config_json, ` + resourceSecretExpr + `, execution_timeout_ms, cache_idle_ms, created_at, updated_at
+		SELECT id, name, type, config_json, resource_text, ` + resourceSecretExpr + `, execution_timeout_ms, cache_idle_ms, created_at, updated_at
 		FROM resources ` + tail
 }
 
@@ -186,6 +188,7 @@ func scanResource(row rowScanner) (Resource, error) {
 		&resource.Name,
 		&resource.Type,
 		&resource.ConfigJSON,
+		&resource.ResourceText,
 		&secrets,
 		&timeout,
 		&cacheIdle,
@@ -213,4 +216,13 @@ func scanResource(row rowScanner) (Resource, error) {
 		return Resource{}, err
 	}
 	return resource, nil
+}
+
+// UpdateResourceText changes the MCP document independently of connection settings.
+func (s *Store) UpdateResourceText(ctx context.Context, id int64, text string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE resources SET resource_text = ?, updated_at = ? WHERE id = ?`, text, formatTime(time.Now().UTC()), id)
+	if err != nil {
+		return err
+	}
+	return rowsAffected(result)
 }

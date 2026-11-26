@@ -32,7 +32,7 @@ const (
 
 // Instructions is the guidance sent to the model.
 func Instructions(appURL string, approvalWait, executionLimit time.Duration) string {
-	return fmt.Sprintf("Every tool call waits for the user to approve it in GateKeep. The command does not run until then. Write the command so the user can read it, because the user checks it before approving. Call the tool for the resource type and pass one of that tool's resource names, the command, and a one-line reason. A request expires if the user does not approve it within %s, and the command does not run. After approval, a command stops if it runs longer than %s. GateKeep is at %s. Give the user that link when they need to approve a request.", approvalPhrase(approvalWait), approvalPhrase(executionLimit), appURL)
+	return fmt.Sprintf("Use resources/list and resources/read to fetch the user-provided context for a connection before writing commands. Every tool call waits for the user to approve it in GateKeep. The command does not run until then. Write the command so the user can read it, because the user checks it before approving. Call the tool for the resource type and pass one of that tool's resource names, the command, and a one-line reason. A request expires if the user does not approve it within %s, and the command does not run. After approval, a command stops if it runs longer than %s. GateKeep is at %s. Give the user that link when they need to approve a request.", approvalPhrase(approvalWait), approvalPhrase(executionLimit), appURL)
 }
 
 func approvalPhrase(wait time.Duration) string {

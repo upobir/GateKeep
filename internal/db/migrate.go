@@ -74,6 +74,12 @@ func migrationVersion(name string) (int, error) {
 }
 
 func applyMigration(db *sql.DB, version int, script string) error {
+	// SQLite table rebuilds require foreign keys to be disabled outside the
+	// transaction. Validate references before committing, then restore enforcement.
+	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	defer db.Exec(`PRAGMA foreign_keys = ON`)
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -91,6 +97,19 @@ func applyMigration(db *sql.DB, version int, script string) error {
 		time.Now().UTC().Format(time.RFC3339Nano),
 	); err != nil {
 		return err
+	}
+	rows, err := tx.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		return err
+	}
+	invalid := rows.Next()
+	scanErr := rows.Err()
+	rows.Close()
+	if scanErr != nil {
+		return scanErr
+	}
+	if invalid {
+		return fmt.Errorf("migration violates foreign key constraints")
 	}
 	return tx.Commit()
 }

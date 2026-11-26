@@ -768,3 +768,16 @@ button.danger {
 .error {
   color: var(--down);
 }
+
+.resource-text-form {
+  margin-top: 1.5rem;
+}
+
+.resource-text-form h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.resource-text-form code {
+  overflow-wrap: anywhere;
+}

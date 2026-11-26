@@ -49,6 +49,7 @@ type resourceView struct {
 	Name                    string            `json:"name"`
 	Type                    string            `json:"type"`
 	Config                  map[string]string `json:"config"`
+	ResourceText            string            `json:"resourceText"`
 	HasSecrets              bool              `json:"hasSecrets"`
 	Secrets                 map[string]string `json:"secrets,omitempty"`
 	ExecutionTimeoutSeconds *int              `json:"executionTimeoutSeconds"`
@@ -370,6 +371,7 @@ func (s *Server) resourceView(resource db.Resource, includeSecrets bool) (resour
 		Name:                    resource.Name,
 		Type:                    resource.Type,
 		Config:                  config,
+		ResourceText:            resource.ResourceText,
 		HasSecrets:              len(resource.SecretsCiphertext) > 0,
 		ExecutionTimeoutSeconds: timeoutSeconds(resource.ExecutionTimeoutMs),
 		CacheIdleSeconds:        timeoutSeconds(resource.CacheIdleMs),
@@ -435,8 +437,36 @@ func writeResourceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, vault.ErrLocked):
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "locked"})
 	case err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed"):
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "a resource with that name already exists"})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "a resource with that type and name already exists"})
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
+}
+
+func (s *Server) handleUpdateResourceText(w http.ResponseWriter, r *http.Request) {
+	id, ok := resourceID(w, r)
+	if !ok {
+		return
+	}
+	if s.store == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "database is unavailable"})
+		return
+	}
+	var input struct {
+		Text *string `json:"text"`
+	}
+	if !readJSONLimit(w, r, &input, 1<<20) {
+		return
+	}
+	if input.Text == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "text is required"})
+		return
+	}
+	s.secretsMu.Lock()
+	defer s.secretsMu.Unlock()
+	if err := s.store.UpdateResourceText(r.Context(), id, *input.Text); err != nil {
+		writeResourceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"text": *input.Text})
 }

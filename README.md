@@ -53,6 +53,8 @@ claude mcp add --transport http gatekeep http://127.0.0.1:8765/mcp
 
 Then add your databases under **Resources** in the web UI.
 
+Each resource has an editable extra text field, exposed to LLMs and harnesses as an MCP resource.
+
 For AWS resources, install AWS CLI separately.
 
 ## Build from source
