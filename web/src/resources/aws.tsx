@@ -8,6 +8,7 @@ export const awsCliPlugin = {
     return <>
       <div className="detail-field"><dt>Credentials</dt><dd className="secret-mask">••••••••</dd></div>
       <div className="detail-field"><dt>Region</dt><dd>{config.region || 'Set per command'}</dd></div>
+      <div className="detail-field"><dt>AWS CLI path</dt><dd>{config.cliPath || 'Not configured'}</dd></div>
     </>
   },
   Form({ config, secrets, savedSecrets, onConfig, onSecret }: ResourceValues) {
@@ -27,7 +28,12 @@ export const awsCliPlugin = {
         <input value={config.region ?? ''} placeholder="us-east-1"
           onChange={(event) => onConfig('region', event.target.value)} />
       </label>
-      <p>Requires AWS CLI on GateKeep’s PATH. Local AWS profiles are not used.</p>
+      <label>
+        AWS CLI path
+        <input required value={config.cliPath ?? ''} placeholder="/opt/homebrew/bin/aws"
+          onChange={(event) => onConfig('cliPath', event.target.value)} />
+      </label>
+      <p>Full path to the AWS CLI executable. Find it with <code>command -v aws</code> in Terminal. Local AWS profiles are not used.</p>
     </>
   },
   commandText(command: string) {

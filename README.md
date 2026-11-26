@@ -53,6 +53,8 @@ claude mcp add --transport http gatekeep http://127.0.0.1:8765/mcp
 
 Then add your databases under **Resources** in the web UI.
 
+For AWS resources, install AWS CLI separately.
+
 ## Build from source
 
 Requires Go, Node 22.12+, and Xcode Command Line Tools.
